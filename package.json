@@ -1,0 +1,62 @@
+{
+  "name": "@tedo-ai/harnas-ts",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20",
+    "bun": ">=1.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./log": {
+      "types": "./dist/log/index.d.ts",
+      "default": "./dist/log/index.js"
+    },
+    "./projections/openai": {
+      "types": "./dist/projections/provider/openai.d.ts",
+      "default": "./dist/projections/provider/openai.js"
+    },
+    "./projections/anthropic": {
+      "types": "./dist/projections/provider/anthropic.d.ts",
+      "default": "./dist/projections/provider/anthropic.js"
+    },
+    "./builtins": {
+      "types": "./dist/builtins/index.d.ts",
+      "default": "./dist/builtins/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run tests/unit",
+    "test:conformance:node": "tsx --test tests/conformance/node.test.ts",
+    "test:conformance:bun": "bun test tests/conformance/bun.test.ts",
+    "test:conformance:deno": "deno test --sloppy-imports --allow-read --allow-env tests/conformance/deno.test.ts",
+    "test:conformance:packed": "npm run build && npm pack && tmpdir=$(mktemp -d) && cd \"$tmpdir\" && npm init -y >/dev/null && npm install \"$OLDPWD\"/tedo-ai-harnas-ts-*.tgz >/dev/null && node --input-type=module -e \"import('@tedo-ai/harnas-ts').then(() => console.log('packed import ok'))\""
+  },
+  "dependencies": {
+    "ajv": "^8.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}
