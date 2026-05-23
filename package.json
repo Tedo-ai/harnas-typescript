@@ -53,7 +53,7 @@
     "test:conformance:node:all": "tsx src/testing/cli.ts --all",
     "test:conformance:bun": "bun test tests/conformance/bun.test.ts",
     "test:conformance:deno": "deno test --sloppy-imports --allow-read --allow-env tests/conformance/deno.test.ts",
-    "test:conformance:packed": "npm run build && npm pack && tmpdir=$(mktemp -d) && cd \"$tmpdir\" && npm init -y >/dev/null && npm install \"$OLDPWD\"/tedo-ai-harnas-typescript-*.tgz >/dev/null && node --input-type=module -e \"import('@tedo-ai/harnas-typescript').then(() => console.log('packed import ok'))\""
+    "test:conformance:packed": "npm run build && node scripts/packed-import.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1"
