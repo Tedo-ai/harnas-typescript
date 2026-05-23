@@ -20,6 +20,7 @@ jobs:
         node-version: [20.x, 22.x]
     steps:
       - uses: actions/checkout@v4
+      - run: git clone --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas "$GITHUB_WORKSPACE/harnas-spec"
 
       - uses: actions/setup-node@v4
         with:
@@ -30,6 +31,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:conformance:node
+        env:
+          HARNAS_SPEC: ${{ github.workspace }}/harnas-spec
       - run: npm run test:conformance:packed
 
   bun:
@@ -37,6 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: git clone --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas "$GITHUB_WORKSPACE/harnas-spec"
 
       - uses: actions/setup-node@v4
         with:
@@ -49,12 +53,15 @@ jobs:
 
       - run: npm ci
       - run: bun test tests/conformance/bun.test.ts
+        env:
+          HARNAS_SPEC: ${{ github.workspace }}/harnas-spec
 
   deno:
     name: Deno
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: git clone --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas "$GITHUB_WORKSPACE/harnas-spec"
 
       - uses: actions/setup-node@v4
         with:
@@ -67,3 +74,5 @@ jobs:
 
       - run: npm ci
       - run: deno test --sloppy-imports --allow-read --allow-env tests/conformance/deno.test.ts
+        env:
+          HARNAS_SPEC: ${{ github.workspace }}/harnas-spec
