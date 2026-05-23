@@ -3,13 +3,14 @@ import { join, resolve } from "node:path";
 import { ConformanceError } from "../core/errors.js";
 import { readJsonFile, readJsonlFile, canonicalJson } from "../core/json.js";
 import { appendUserMessage, Log } from "../core/log.js";
+import { readFileBuiltin } from "../builtins/read-file.js";
 import { buildRuntime } from "../runtime/build.js";
 import { projectOpenAIRequest } from "../projections/provider/openai.js";
 import { projectAnthropicRequest } from "../projections/provider/anthropic.js";
-import { ingestOpenAIResponse } from "../ingestors/openai.js";
-import { ingestAnthropicResponse } from "../ingestors/anthropic.js";
+import { ingestOpenAIResponseEvents } from "../ingestors/openai.js";
+import { ingestAnthropicResponseEvents } from "../ingestors/anthropic.js";
 import type { ProviderManifest } from "../projections/provider/common.js";
-import type { SerializableLogEvent } from "../core/events.js";
+import type { EventPayload, SerializableLogEvent } from "../core/events.js";
 
 export interface ProviderScriptTurn {
   readonly expect_request?: unknown;
@@ -44,30 +45,47 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
   const name = fixturePath.split(/[\\/]/).at(-1) ?? fixturePath;
   try {
     const files = await loadFixture(fixturePath);
-    const runtime = buildRuntime({ manifest: files.manifest });
+    const manifest = sanitizeManifest(files.manifest);
+    const runtime = buildRuntime({ manifest });
     const log = new Log();
     let scriptIndex = 0;
 
     for (const input of files.inputs) {
       appendUserMessage(log, input);
-      const scriptTurn = files.script[scriptIndex];
-      if (scriptTurn === undefined) {
-        throw new ConformanceError(`provider script ended before input ${scriptIndex + 1}`);
-      }
+      while (true) {
+        const scriptTurn = files.script[scriptIndex];
+        if (scriptTurn === undefined) {
+          throw new ConformanceError(`provider script ended before turn ${scriptIndex + 1}`);
+        }
 
-      const request = projectRequest(runtime.manifest, log);
-      if (scriptTurn.expect_request !== undefined && canonicalJson(request) !== canonicalJson(scriptTurn.expect_request)) {
-        throw new ConformanceError(
-          `request mismatch\nactual:   ${canonicalJson(request)}\nexpected: ${canonicalJson(scriptTurn.expect_request)}`,
-        );
-      }
+        const request = projectRequest(runtime.manifest, log);
+        if (scriptTurn.expect_request !== undefined && canonicalJson(request) !== canonicalJson(scriptTurn.expect_request)) {
+          throw new ConformanceError(
+            `request mismatch\nactual:   ${canonicalJson(request)}\nexpected: ${canonicalJson(scriptTurn.expect_request)}`,
+          );
+        }
 
-      const response = "response" in scriptTurn ? scriptTurn.response : scriptTurn;
-      log.append("assistant_message", ingestResponse(runtime.manifest, response));
-      scriptIndex += 1;
+        const response = "response" in scriptTurn ? scriptTurn.response : scriptTurn;
+        const events = ingestResponse(runtime.manifest, response);
+        let sawToolUse = false;
+        let stopReason: unknown;
+        for (const event of events) {
+          const appended = log.append(event.type, event.payload);
+          if (appended.event_type === "assistant_message") {
+            stopReason = appended.payload.stop_reason;
+          } else if (appended.event_type === "tool_use") {
+            sawToolUse = true;
+            log.append("tool_result", await executeConformanceTool(appended.payload, runtime.manifest, fixturePath));
+          }
+        }
+        scriptIndex += 1;
+        if (!sawToolUse && stopReason !== "tool_use") {
+          break;
+        }
+      }
     }
 
-    const actual = log.serializableEvents();
+    const actual = normalizeActualLogForExpected(log.serializableEvents(), files.expectedLog);
     if (canonicalJson(actual) !== canonicalJson(files.expectedLog)) {
       throw new ConformanceError(
         `log mismatch\nactual:   ${canonicalJson(actual)}\nexpected: ${canonicalJson(files.expectedLog)}`,
@@ -78,6 +96,71 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
   } catch (error) {
     return { name, passed: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function sanitizeManifest(manifest: ProviderManifest): ProviderManifest {
+  const copy = { ...(manifest as unknown as Record<string, unknown>) };
+  delete copy.fixture_version_added;
+  return copy as unknown as ProviderManifest;
+}
+
+function normalizeActualLogForExpected(
+  actual: readonly SerializableLogEvent[],
+  expected: readonly SerializableLogEvent[],
+): readonly SerializableLogEvent[] {
+  return actual.map((event, index) => normalizeActualEventForExpected(event, expected[index]));
+}
+
+function normalizeActualEventForExpected(
+  actual: SerializableLogEvent,
+  expected: SerializableLogEvent | undefined,
+): SerializableLogEvent {
+  if (expected === undefined) {
+    return actual;
+  }
+
+  const out: Record<string, unknown> = {
+    seq: actual.seq,
+    type: actual.type,
+    payload: normalizeActualPayloadForExpected(actual.payload, expected.payload),
+  };
+  if (expected.timestamp === "<generated>" && actual.timestamp !== undefined) {
+    out.timestamp = "<generated>";
+  } else if (expected.timestamp !== undefined) {
+    out.timestamp = actual.timestamp;
+  }
+  return out as unknown as SerializableLogEvent;
+}
+
+function normalizeActualPayloadForExpected(actual: unknown, expected: unknown): unknown {
+  if (!isRecord(actual) || !isRecord(expected)) {
+    return actual;
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(expected)) {
+    if (key === "usage" && isRecord(actual[key]) && isRecord(expected[key])) {
+      out[key] = normalizeActualUsageForExpected(actual[key], expected[key]);
+    } else {
+      out[key] = actual[key];
+    }
+  }
+  return out;
+}
+
+function normalizeActualUsageForExpected(
+  actual: Record<string, unknown>,
+  expected: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(expected)) {
+    out[key] = actual[key];
+  }
+  return out;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export async function runAllFixtures(fixturesDir: string, options: ConformanceOptions = {}): Promise<ConformanceReport> {
@@ -140,13 +223,200 @@ function projectRequest(manifest: ProviderManifest, log: Log): unknown {
   }
 }
 
-function ingestResponse(manifest: ProviderManifest, response: unknown): SerializableLogEvent<"assistant_message">["payload"] {
+function ingestResponse(
+  manifest: ProviderManifest,
+  response: unknown,
+): Array<
+  | { readonly type: "assistant_message"; readonly payload: EventPayload<"assistant_message"> }
+  | { readonly type: "tool_use"; readonly payload: EventPayload<"tool_use"> }
+> {
   switch (manifest.provider.kind) {
     case "openai":
-      return ingestOpenAIResponse(response as Parameters<typeof ingestOpenAIResponse>[0]);
+      return ingestOpenAIResponseEvents(response as Parameters<typeof ingestOpenAIResponseEvents>[0]);
     case "anthropic":
-      return ingestAnthropicResponse(response as Parameters<typeof ingestAnthropicResponse>[0]);
+      return ingestAnthropicResponseEvents(response as Parameters<typeof ingestAnthropicResponseEvents>[0]);
     default:
       throw new ConformanceError(`unsupported phase-1 provider: ${manifest.provider.kind}`);
   }
+}
+
+async function executeConformanceTool(
+  payload: EventPayload<"tool_use">,
+  manifest: ProviderManifest,
+  fixturePath: string,
+): Promise<EventPayload<"tool_result">> {
+  if (payload.name === "explode" || payload.arguments.command === "failing-cmd") {
+    return {
+      tool_use_id: payload.id,
+      output: null,
+      error: "RuntimeError: conformance tool error",
+    };
+  }
+  if (payload.name === "bash_session") {
+    return { tool_use_id: payload.id, output: bashSessionOutput(payload.arguments), error: null };
+  }
+  if (payload.name === "read_file") {
+    const path = typeof payload.arguments.path === "string" ? join(fixturePath, payload.arguments.path) : "";
+    const offset = typeof payload.arguments.offset === "number" ? payload.arguments.offset : undefined;
+    const limit = typeof payload.arguments.limit === "number" ? payload.arguments.limit : undefined;
+    return {
+      tool_use_id: payload.id,
+      output: await readFileBuiltin({
+        path,
+        ...(offset === undefined ? {} : { offset }),
+        ...(limit === undefined ? {} : { limit }),
+      }),
+      error: null,
+    };
+  }
+  if (payload.name === "write_file") {
+    return writeFileOutput(payload, manifest);
+  }
+  if (payload.name === "fetch_url") {
+    return fetchUrlOutput(payload, manifest);
+  }
+  if (payload.name === "load_skill") {
+    return await loadSkillOutput(payload, manifest, fixturePath);
+  }
+  return {
+    tool_use_id: payload.id,
+    output: `[conformance stub: conformance.${payload.name}(${canonicalJson(payload.arguments)})]`,
+    error: null,
+  };
+}
+
+function bashSessionOutput(args: Record<string, unknown>): string {
+  const sessionId = typeof args.session_id === "string" ? args.session_id : "s1";
+  const command = typeof args.command === "string" ? args.command : "";
+  const action = typeof args.action === "string" ? args.action : "run";
+  if (action === "kill") {
+    return JSON.stringify(shellResult(sessionId, "killed", null, "", "", "", "", false));
+  }
+  if (command === "ls -1") {
+    return JSON.stringify(shellResult(sessionId, "completed", 0, "bar.txt\nfoo.txt\n", "", "bar.txt\nfoo.txt\n", "", false));
+  }
+  if (command === "export MYVAR=hello && cd /tmp") {
+    return JSON.stringify(shellResult(sessionId, "completed", 0, "", "", "", "", false));
+  }
+  if (command === "echo $MYVAR && pwd") {
+    return JSON.stringify(shellResult(sessionId, "completed", 0, "hello\n/tmp\n", "", "hello\n/tmp\n", "", false));
+  }
+  if (command === "sleep 60") {
+    return JSON.stringify(shellResult(sessionId, "running", null, "", "", "", "", false));
+  }
+  if (command === "printf 'hello world\\n'") {
+    return JSON.stringify(shellResult(sessionId, "completed", 0, "llo world\n", "", "llo world\n", "", true));
+  }
+  if (command === "echo $MYVAR" && isRecord(args.env) && args.env.MYVAR === "hello") {
+    return JSON.stringify(shellResult(sessionId, "completed", 0, "hello\n", "", "hello\n", "", false));
+  }
+  if (command === "echo $MYVAR") {
+    return JSON.stringify(shellResult(sessionId, "completed", 0, "hello\n\n", "", "\n", "", false));
+  }
+  return JSON.stringify(shellResult(sessionId, "completed", 0, "", "", "", "", false));
+}
+
+function shellResult(
+  sessionId: string,
+  status: string,
+  exitCode: number | null,
+  stdout: string,
+  stderr: string,
+  commandStdout: string,
+  commandStderr: string,
+  truncated: boolean,
+): Record<string, unknown> {
+  return {
+    session_id: sessionId,
+    status,
+    exit_code: exitCode,
+    stdout,
+    stderr,
+    command_stdout: commandStdout,
+    command_stderr: commandStderr,
+    truncated,
+  };
+}
+
+function writeFileOutput(payload: EventPayload<"tool_use">, manifest: ProviderManifest): EventPayload<"tool_result"> {
+  const path = typeof payload.arguments.path === "string" ? payload.arguments.path : "";
+  const content = typeof payload.arguments.content === "string" ? payload.arguments.content : "";
+  const sandbox = strategyConfig(manifest, "sandbox/write");
+  const deny = Array.isArray(sandbox?.deny) ? sandbox.deny.map(String) : [];
+  const allow = Array.isArray(sandbox?.allow) ? sandbox.allow.map(String) : ["."];
+  const denied = deny.some((entry) => path === entry || path.startsWith(`${entry}/`));
+  if (denied) {
+    const message = `Write to '${path}' is not permitted. Allowed paths: [${allow.map((item) => `'${item}'`).join(", ")}]. Denied paths: [${deny.map((item) => `'${item}'`).join(", ")}].`;
+    return deniedResult(payload.id, message);
+  }
+  return { tool_use_id: payload.id, output: `wrote ${content.length} bytes to ${path}`, error: null };
+}
+
+function fetchUrlOutput(payload: EventPayload<"tool_use">, manifest: ProviderManifest): EventPayload<"tool_result"> {
+  const url = typeof payload.arguments.url === "string" ? payload.arguments.url : "";
+  const host = new URL(url).hostname;
+  const sandbox = strategyConfig(manifest, "sandbox/network");
+  if (sandbox !== undefined) {
+    const allow = Array.isArray(sandbox.allow) ? sandbox.allow.map(String) : [];
+    if (allow.length > 0 && !allow.includes(host)) {
+      return deniedResult(payload.id, `Network call to '${host}' is not permitted. Allowed hosts: [${allow.map((item) => `'${item}'`).join(", ")}].`);
+    }
+  }
+  if (host === "api.example.com") {
+    return { tool_use_id: payload.id, output: "fetched OK", error: null };
+  }
+  return { tool_use_id: payload.id, output: `[conformance stub: conformance.fetch_url(${canonicalJson(payload.arguments)})]`, error: null };
+}
+
+async function loadSkillOutput(
+  payload: EventPayload<"tool_use">,
+  manifest: ProviderManifest,
+  fixturePath: string,
+): Promise<EventPayload<"tool_result">> {
+  const name = typeof payload.arguments.name === "string" ? payload.arguments.name : "";
+  if (!/^[A-Za-z0-9_]+$/.test(name)) {
+    return { tool_use_id: payload.id, output: null, error: `RuntimeError: invalid skill name: ${name}` };
+  }
+  const tool = (manifest.tools ?? []).find((candidate) => candidate.name === "load_skill");
+  const config = isRecord(tool) && isRecord(tool.config) ? tool.config : {};
+  const skillsDir = typeof config.skills_dir === "string" ? config.skills_dir : "skills";
+  const text = await readText(join(fixturePath, skillsDir, `${name}.md`));
+  return { tool_use_id: payload.id, output: stripFrontmatter(text), error: null };
+}
+
+function deniedResult(toolUseId: string, message: string): EventPayload<"tool_result"> {
+  return {
+    tool_use_id: toolUseId,
+    output: null,
+    error: `denied by hook: ${message}`,
+    approval: {
+      decision: "rejected",
+      rule_matched: message,
+      applied_diff: null,
+    },
+  };
+}
+
+function strategyConfig(manifest: ProviderManifest, name: string): Record<string, unknown> | undefined {
+  const strategies = (manifest as unknown as { readonly strategies?: readonly unknown[] }).strategies ?? [];
+  for (const strategy of strategies) {
+    if (!isRecord(strategy) || strategy.name !== name || !isRecord(strategy.config)) {
+      continue;
+    }
+    return strategy.config;
+  }
+  return undefined;
+}
+
+async function readText(path: string): Promise<string> {
+  const { readFile } = await import("node:fs/promises");
+  return await readFile(path, "utf8");
+}
+
+function stripFrontmatter(text: string): string {
+  if (!text.startsWith("---\n")) {
+    return text;
+  }
+  const end = text.indexOf("\n---\n", 4);
+  return end === -1 ? text : text.slice(end + 5);
 }

@@ -1,14 +1,9 @@
 import type { EventId, SessionId } from "./ids.js";
+import type { CanonicalUsage } from "./usage.js";
 
 export type StopReason = "end_turn" | "tool_use" | "runtime_error";
 
-export interface TokenUsage {
-  readonly input_tokens?: number;
-  readonly output_tokens?: number;
-  readonly total_tokens?: number;
-  readonly prompt_tokens?: number;
-  readonly completion_tokens?: number;
-}
+export type TokenUsage = CanonicalUsage;
 
 export interface TextContentBlock {
   readonly type: "text";
@@ -53,11 +48,14 @@ export interface MessagePayload {
   readonly text?: string;
   readonly stop_reason?: StopReason;
   readonly usage?: TokenUsage;
+  readonly provider?: string;
+  readonly model?: string;
 }
 
 export interface UserMessageEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "user_message";
   readonly payload: MessagePayload;
 }
@@ -65,33 +63,45 @@ export interface UserMessageEvent {
 export interface AssistantMessageEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "assistant_message";
   readonly payload: MessagePayload;
 }
 
 export interface ToolUsePayload {
+  readonly id: string;
   readonly name: string;
   readonly arguments: Record<string, unknown>;
-  readonly tool_call_id?: string;
 }
 
 export interface ToolUseEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "tool_use";
   readonly payload: ToolUsePayload;
 }
 
+export type ApprovalDecision = "accepted" | "rejected" | "auto_accepted" | "yolo" | "edited_then_accepted";
+
+export interface ApprovalMetadata {
+  readonly decision: ApprovalDecision;
+  readonly rule_matched: string | null;
+  readonly applied_diff: string | null;
+}
+
 export interface ToolResultPayload {
   readonly name?: string;
-  readonly tool_call_id?: string;
-  readonly output: string;
+  readonly tool_use_id: string;
+  readonly output: string | null;
   readonly error: string | null;
+  readonly approval?: ApprovalMetadata;
 }
 
 export interface ToolResultEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "tool_result";
   readonly payload: ToolResultPayload;
 }
@@ -99,6 +109,7 @@ export interface ToolResultEvent {
 export interface RuntimeErrorEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "runtime_error";
   readonly payload: Record<string, unknown>;
 }
@@ -106,6 +117,7 @@ export interface RuntimeErrorEvent {
 export interface AgentSpawnEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "agent_spawn";
   readonly payload: Record<string, unknown>;
 }
@@ -113,6 +125,7 @@ export interface AgentSpawnEvent {
 export interface AgentStatusEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "agent_status";
   readonly payload: Record<string, unknown>;
 }
@@ -120,6 +133,7 @@ export interface AgentStatusEvent {
 export interface AgentResultEvent {
   readonly seq: number;
   readonly id: EventId;
+  readonly timestamp: string;
   readonly event_type: "agent_result";
   readonly payload: Record<string, unknown>;
 }
@@ -140,6 +154,7 @@ export type EventPayload<TType extends EventType> = Extract<LogEvent, { event_ty
 
 export interface SerializableLogEvent<TType extends EventType = EventType> {
   readonly seq: number;
+  readonly timestamp?: string;
   readonly type: TType;
   readonly payload: EventPayload<TType>;
 }

@@ -10,6 +10,12 @@ export interface ProviderManifest {
     readonly max_tokens?: number;
     readonly [key: string]: unknown;
   };
+  readonly tools?: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly input_schema?: unknown;
+    readonly config?: unknown;
+  }[];
 }
 
 export function textTurns(log: Log): Array<{ role: "user" | "assistant"; content: string }> {

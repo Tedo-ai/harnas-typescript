@@ -17,6 +17,7 @@ export class Log {
     const event = {
       seq: this.#events.length,
       id: eventIdForSeq(this.#events.length),
+      timestamp: new Date().toISOString(),
       event_type: eventType,
       payload: normalizedPayload,
     } as Extract<LogEvent, { event_type: TType }>;
@@ -31,6 +32,7 @@ export class Log {
   serializableEvents(): readonly SerializableLogEvent[] {
     return this.#events.map((event) => ({
       seq: event.seq,
+      timestamp: event.timestamp,
       type: event.event_type,
       payload: serializePayload(event.payload),
     })) as readonly SerializableLogEvent[];
@@ -53,6 +55,12 @@ function serializePayload(payload: LogEvent["payload"]): LogEvent["payload"] {
     }
     if (payload.usage !== undefined) {
       serialized.usage = payload.usage;
+    }
+    if (payload.provider !== undefined) {
+      serialized.provider = payload.provider;
+    }
+    if (payload.model !== undefined) {
+      serialized.model = payload.model;
     }
     return serialized as LogEvent["payload"];
   }

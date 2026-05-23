@@ -8,6 +8,7 @@ describe("Log", () => {
     const [event] = log.events();
 
     expect(event?.event_type).toBe("user_message");
+    expect(event?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(event?.payload).toEqual({
       content: [{ type: "text", text: "hello" }],
       text: "hello",

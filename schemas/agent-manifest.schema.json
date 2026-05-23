@@ -95,7 +95,15 @@
           },
           "config": {
             "type": "object",
-            "description": "Implementer-opaque JSON-serializable configuration preserved with the tool entry and made available to the resolved handler."
+            "description": "Implementer-opaque JSON-serializable configuration preserved with the tool entry and made available to the resolved handler.",
+            "properties": {
+              "shell_type": {
+                "type": "string",
+                "enum": ["auto", "posix", "powershell", "cmd"],
+                "description": "Optional bash_session shell family hint. 'auto' asks the runtime to resolve the active shell family."
+              }
+            },
+            "additionalProperties": true
           }
         }
       }

@@ -2,9 +2,16 @@ import { defaultFixturesDir, runAllFixtures } from "./conformance-runner.js";
 
 const fixturesDir = await defaultFixturesDir();
 const fixtureNames = process.argv.slice(2);
-const report = await runAllFixtures(fixturesDir, {
-  fixtureNames: fixtureNames.length > 0 ? fixtureNames : ["minimal-chat", "with-system-prompt-openai"],
-});
+const requestedAll = fixtureNames.includes("--all");
+const selectedFixtures = requestedAll
+  ? undefined
+  : fixtureNames.length > 0
+    ? fixtureNames
+    : ["minimal-chat", "with-system-prompt-openai"];
+const report = await runAllFixtures(
+  fixturesDir,
+  selectedFixtures === undefined ? {} : { fixtureNames: selectedFixtures },
+);
 
 for (const result of report.results) {
   if (result.passed) {

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0] — 2026-05-24
+
+### Changed
+
+- Renamed the package identity from `@tedo-ai/harnas-ts` to
+  `@tedo-ai/harnas-typescript` per ADR 0004.
+- Updated the conformance target to Harnas spec v0.19.0: 65 fixtures.
+- Added canonical event timestamps and canonical provider usage metadata
+  to the foundation event/ingestor path.
+- Reserved the `@tedo-ai/harnas-typescript/mcp` subpath export for future
+  v0.20 contrib work without making core depend on MCP.
+
 ## [0.1.0] — 2026-05-21
 
 ### Added
@@ -12,4 +24,3 @@
 - Minimal provider projection/ingestor path for `minimal-chat` and
   `with-system-prompt-openai` conformance fixtures.
 - `read_file` built-in with offset/limit and cat-style line numbering.
-
