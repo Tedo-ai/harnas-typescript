@@ -1,6 +1,7 @@
 import type { Log } from "../../core/log.js";
 import type { ContentBlock, DocumentContentBlock, ImageContentBlock, MessagePayload } from "../../core/events.js";
 import { messageText } from "../../core/events.js";
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

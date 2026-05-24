@@ -52,7 +52,7 @@
     "test:conformance:node": "tsx --test tests/conformance/node.test.ts",
     "test:conformance:node:all": "tsx src/testing/cli.ts --all",
     "test:conformance:bun": "bun test tests/conformance/bun.test.ts",
-    "test:conformance:deno": "deno test --sloppy-imports --allow-read --allow-env tests/conformance/deno.test.ts",
+    "test:conformance:deno": "deno test --sloppy-imports --allow-read --allow-env --allow-sys=uid tests/conformance/deno.test.ts",
     "test:conformance:packed": "npm run build && node scripts/packed-import.mjs"
   },
   "dependencies": {

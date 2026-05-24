@@ -73,6 +73,6 @@ jobs:
           deno-version: v2.x
 
       - run: npm ci
-      - run: deno test --sloppy-imports --allow-read --allow-env tests/conformance/deno.test.ts
+      - run: deno test --sloppy-imports --allow-read --allow-env --allow-sys=uid tests/conformance/deno.test.ts
         env:
           HARNAS_SPEC: ${{ github.workspace }}/harnas-spec

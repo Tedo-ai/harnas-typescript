@@ -1,4 +1,5 @@
 import { access, readdir } from "node:fs/promises";
+import { Buffer } from "node:buffer";
 import { join, resolve } from "node:path";
 import { ConformanceError } from "../core/errors.js";
 import { readJsonFile, readJsonlFile, canonicalJson } from "../core/json.js";
