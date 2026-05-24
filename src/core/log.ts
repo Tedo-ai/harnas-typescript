@@ -62,6 +62,9 @@ function serializePayload(payload: LogEvent["payload"]): LogEvent["payload"] {
     if (payload.model !== undefined) {
       serialized.model = payload.model;
     }
+    if (payload.reasoning !== undefined) {
+      serialized.reasoning = payload.reasoning;
+    }
     return serialized as LogEvent["payload"];
   }
   return payload;

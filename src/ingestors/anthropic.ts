@@ -4,6 +4,8 @@ import { normalizeUsage } from "../core/usage.js";
 export interface AnthropicContentBlock {
   readonly type?: string;
   readonly text?: string;
+  readonly thinking?: string;
+  readonly signature?: string;
   readonly id?: string;
   readonly name?: string;
   readonly input?: Record<string, unknown>;
@@ -30,6 +32,13 @@ export function ingestAnthropicResponseEvents(
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text ?? "")
     .join("");
+  const reasoning = (response.content ?? [])
+    .filter((block) => block.type === "thinking" && typeof block.thinking === "string")
+    .map((block) => ({
+      type: "text",
+      text: block.thinking ?? "",
+      ...(typeof block.signature === "string" ? { signature: block.signature } : {}),
+    }));
   const events: Array<
     | { readonly type: "assistant_message"; readonly payload: EventPayload<"assistant_message"> }
     | { readonly type: "tool_use"; readonly payload: EventPayload<"tool_use"> }
@@ -43,6 +52,7 @@ export function ingestAnthropicResponseEvents(
         usage: normalizeUsage(response.usage),
         provider: "anthropic",
         ...(response.model !== undefined ? { model: response.model } : {}),
+        ...(reasoning.length > 0 ? { reasoning } : {}),
       },
     },
   ];

@@ -1,10 +1,11 @@
 import type { Log } from "../../core/log.js";
-import type { ProviderManifest } from "./common.js";
+import type { ProjectionOptions, ProviderManifest } from "./common.js";
 import { messageText } from "../../core/events.js";
+import { contentBlocksForOpenAI, hasOnlyText } from "./common.js";
 
 export interface OpenAIMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
-  readonly content: string | null;
+  readonly content: unknown;
   readonly tool_call_id?: string;
   readonly tool_calls?: readonly {
     readonly id: string;
@@ -29,7 +30,7 @@ export interface OpenAIRequest {
   }[];
 }
 
-export function projectOpenAIRequest(manifest: ProviderManifest, log: Log): OpenAIRequest {
+export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, options: ProjectionOptions = {}): OpenAIRequest {
   const messages: OpenAIMessage[] = [];
   if (manifest.system !== undefined && manifest.system.length > 0) {
     messages.push({ role: "system", content: manifest.system });
@@ -41,7 +42,10 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log): Open
       continue;
     }
     if (event.event_type === "user_message") {
-      messages.push({ role: "user", content: messageText(event.payload) });
+      messages.push({
+        role: "user",
+        content: hasOnlyText(event.payload) ? messageText(event.payload) : contentBlocksForOpenAI(event.payload, options),
+      });
     } else if (event.event_type === "assistant_message") {
       const toolCalls: Array<NonNullable<OpenAIMessage["tool_calls"]>[number]> = [];
       let scan = index + 1;

@@ -6,6 +6,8 @@ export interface OpenAIResponse {
   readonly choices?: readonly {
     readonly message?: {
       readonly content?: string | null;
+      readonly reasoning?: string;
+      readonly reasoning_details?: readonly { readonly type?: string; readonly text?: string }[];
       readonly tool_calls?: readonly {
         readonly id?: string;
         readonly function?: {
@@ -18,6 +20,8 @@ export interface OpenAIResponse {
   }[];
   readonly usage?: Record<string, unknown>;
 }
+
+type OpenAIMessage = NonNullable<NonNullable<OpenAIResponse["choices"]>[number]["message"]>;
 
 export function ingestOpenAIResponse(response: OpenAIResponse): EventPayload<"assistant_message"> {
   return ingestOpenAIResponseEvents(response)[0]?.payload as EventPayload<"assistant_message">;
@@ -32,6 +36,7 @@ export function ingestOpenAIResponseEvents(
   const choice = response.choices?.[0];
   const message = choice?.message;
   const text = choice?.message?.content ?? "";
+  const reasoning = openAIReasoning(message);
   const events: Array<
     | { readonly type: "assistant_message"; readonly payload: EventPayload<"assistant_message"> }
     | { readonly type: "tool_use"; readonly payload: EventPayload<"tool_use"> }
@@ -45,6 +50,7 @@ export function ingestOpenAIResponseEvents(
         usage: normalizeUsage(response.usage),
         provider: "openai",
         ...(response.model !== undefined ? { model: response.model } : {}),
+        ...(reasoning.length > 0 ? { reasoning } : {}),
       },
     },
   ];
@@ -62,6 +68,16 @@ export function ingestOpenAIResponseEvents(
     });
   }
   return events;
+}
+
+function openAIReasoning(message: OpenAIMessage | undefined): readonly Record<string, unknown>[] {
+  if (typeof message?.reasoning === "string") {
+    return [{ type: "text", text: message.reasoning }];
+  }
+  const details = message?.reasoning_details ?? [];
+  return details
+    .filter((item) => typeof item.text === "string")
+    .map((item) => ({ type: "text", text: item.text ?? "" }));
 }
 
 function parseArguments(raw: string | undefined): Record<string, unknown> {

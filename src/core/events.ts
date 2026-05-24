@@ -50,6 +50,7 @@ export interface MessagePayload {
   readonly usage?: TokenUsage;
   readonly provider?: string;
   readonly model?: string;
+  readonly reasoning?: readonly Record<string, unknown>[];
 }
 
 export interface UserMessageEvent {
@@ -114,6 +115,38 @@ export interface RuntimeErrorEvent {
   readonly payload: Record<string, unknown>;
 }
 
+export interface ProviderErrorEvent {
+  readonly seq: number;
+  readonly id: EventId;
+  readonly timestamp: string;
+  readonly event_type: "provider_error";
+  readonly payload: Record<string, unknown>;
+}
+
+export interface AnnotationEvent {
+  readonly seq: number;
+  readonly id: EventId;
+  readonly timestamp: string;
+  readonly event_type: "annotation";
+  readonly payload: Record<string, unknown>;
+}
+
+export interface CompactEvent {
+  readonly seq: number;
+  readonly id: EventId;
+  readonly timestamp: string;
+  readonly event_type: "compact";
+  readonly payload: Record<string, unknown>;
+}
+
+export interface RevertEvent {
+  readonly seq: number;
+  readonly id: EventId;
+  readonly timestamp: string;
+  readonly event_type: "revert";
+  readonly payload: Record<string, unknown>;
+}
+
 export interface AgentSpawnEvent {
   readonly seq: number;
   readonly id: EventId;
@@ -144,6 +177,10 @@ export type LogEvent =
   | ToolUseEvent
   | ToolResultEvent
   | RuntimeErrorEvent
+  | ProviderErrorEvent
+  | AnnotationEvent
+  | CompactEvent
+  | RevertEvent
   | AgentSpawnEvent
   | AgentStatusEvent
   | AgentResultEvent;

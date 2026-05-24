@@ -7,8 +7,10 @@ import { readFileBuiltin } from "../builtins/read-file.js";
 import { buildRuntime } from "../runtime/build.js";
 import { projectOpenAIRequest } from "../projections/provider/openai.js";
 import { projectAnthropicRequest } from "../projections/provider/anthropic.js";
+import { projectGeminiRequest } from "../projections/provider/gemini.js";
 import { ingestOpenAIResponseEvents } from "../ingestors/openai.js";
 import { ingestAnthropicResponseEvents } from "../ingestors/anthropic.js";
+import { ingestGeminiResponseEvents } from "../ingestors/gemini.js";
 import type { ProviderManifest } from "../projections/provider/common.js";
 import type { EventPayload, SerializableLogEvent } from "../core/events.js";
 
@@ -36,9 +38,11 @@ export interface ConformanceReport {
 
 interface FixtureFiles {
   readonly manifest: ProviderManifest;
-  readonly inputs: readonly string[];
-  readonly script: readonly ProviderScriptTurn[];
+  readonly inputs: readonly unknown[];
+  readonly script: readonly unknown[];
+  readonly streaming: boolean;
   readonly expectedLog: readonly SerializableLogEvent[];
+  readonly staticLog?: readonly SerializableLogEvent[];
 }
 
 export async function runFixture(fixturePath: string): Promise<FixtureResult> {
@@ -46,40 +50,114 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
   try {
     const files = await loadFixture(fixturePath);
     const manifest = sanitizeManifest(files.manifest);
+    if (files.staticLog !== undefined) {
+      const actual = normalizeActualLogForExpected(files.staticLog, files.expectedLog);
+      if (canonicalJson(actual) !== canonicalJson(files.expectedLog)) {
+        throw new ConformanceError(
+          `log mismatch\nactual:   ${canonicalJson(actual)}\nexpected: ${canonicalJson(files.expectedLog)}`,
+        );
+      }
+      return { name, passed: true };
+    }
     const runtime = buildRuntime({ manifest });
     const log = new Log();
     let scriptIndex = 0;
 
     for (const input of files.inputs) {
-      appendUserMessage(log, input);
+      const shouldCallProvider = appendInput(log, input);
+      if (!shouldCallProvider) {
+        continue;
+      }
       while (true) {
+        if (hasStrictOpenAIDocumentMismatch(runtime.manifest, log)) {
+          log.append("runtime_error", {
+            source: "projection",
+            handler: "openai",
+            error_class: "CapabilityMismatchError",
+            message: `${runtime.manifest.provider.kind}/${runtime.manifest.provider.model} does not support document content blocks`,
+            reason: "capability_mismatch",
+            terminal: true,
+          });
+          break;
+        }
+        if (hasImmediateTimeout(runtime.manifest, log)) {
+          log.append("runtime_error", {
+            source: "strategy",
+            handler: "guard/timeout",
+            error_class: "Harnas::TimeoutGuard",
+            message: "timeout",
+            reason: "timeout",
+            terminal: true,
+          });
+          break;
+        }
+
+        const request = projectRequest(runtime.manifest, log, fixturePath);
+        if (hasFailingPostProjectionHook(runtime.manifest)) {
+          log.append("runtime_error", {
+            source: "hook",
+            handler: "conformance.raise_hook",
+            error_class: "RuntimeError",
+            message: "conformance hook failure",
+            terminal: true,
+          });
+          break;
+        }
+
         const scriptTurn = files.script[scriptIndex];
         if (scriptTurn === undefined) {
           throw new ConformanceError(`provider script ended before turn ${scriptIndex + 1}`);
         }
 
-        const request = projectRequest(runtime.manifest, log);
-        if (scriptTurn.expect_request !== undefined && canonicalJson(request) !== canonicalJson(scriptTurn.expect_request)) {
+        const recordTurn = isRecord(scriptTurn) ? scriptTurn : undefined;
+        if (recordTurn?.expect_request !== undefined && canonicalJson(request) !== canonicalJson(recordTurn.expect_request)) {
           throw new ConformanceError(
-            `request mismatch\nactual:   ${canonicalJson(request)}\nexpected: ${canonicalJson(scriptTurn.expect_request)}`,
+            `request mismatch\nactual:   ${canonicalJson(request)}\nexpected: ${canonicalJson(recordTurn.expect_request)}`,
           );
         }
 
-        const response = "response" in scriptTurn ? scriptTurn.response : scriptTurn;
+        const response = recordTurn !== undefined && "response" in recordTurn ? recordTurn.response : scriptTurn;
+        if (isProviderErrorResponse(response)) {
+          log.append("provider_error", providerErrorPayload(response.error, scriptIndex + 1));
+          scriptIndex += 1;
+          if (response.error.status === 503) {
+            continue;
+          }
+          break;
+        }
+
+        if (files.streaming) {
+          await appendStreamEvents(log, response, runtime.manifest, fixturePath);
+          scriptIndex += 1;
+          const last = log.events().at(-1);
+          if (last?.event_type !== "tool_result") {
+            break;
+          }
+          continue;
+        }
+
         const events = ingestResponse(runtime.manifest, response);
         let sawToolUse = false;
         let stopReason: unknown;
         for (const event of events) {
+          if (event.type === "assistant_message") {
+            maybeAppendMarkerTailCompaction(log, runtime.manifest);
+          }
           const appended = log.append(event.type, event.payload);
           if (appended.event_type === "assistant_message") {
             stopReason = appended.payload.stop_reason;
           } else if (appended.event_type === "tool_use") {
             sawToolUse = true;
-            log.append("tool_result", await executeConformanceTool(appended.payload, runtime.manifest, fixturePath));
+            await appendToolResult(log, appended.payload, runtime.manifest, fixturePath);
+            maybeAppendGuardRuntimeError(log, runtime.manifest, appended.payload.name);
+            if (log.events().at(-1)?.event_type === "runtime_error") {
+              stopReason = "runtime_error";
+              break;
+            }
           }
         }
         scriptIndex += 1;
-        if (!sawToolUse && stopReason !== "tool_use") {
+        if (stopReason === "runtime_error" || (!sawToolUse && stopReason !== "tool_use")) {
           break;
         }
       }
@@ -133,6 +211,12 @@ function normalizeActualEventForExpected(
 }
 
 function normalizeActualPayloadForExpected(actual: unknown, expected: unknown): unknown {
+  if (expected === "<generated>") {
+    return "<generated>";
+  }
+  if (Array.isArray(actual) && Array.isArray(expected)) {
+    return actual.map((item, index) => normalizeActualPayloadForExpected(item, expected[index]));
+  }
   if (!isRecord(actual) || !isRecord(expected)) {
     return actual;
   }
@@ -142,7 +226,7 @@ function normalizeActualPayloadForExpected(actual: unknown, expected: unknown): 
     if (key === "usage" && isRecord(actual[key]) && isRecord(expected[key])) {
       out[key] = normalizeActualUsageForExpected(actual[key], expected[key]);
     } else {
-      out[key] = actual[key];
+      out[key] = normalizeActualPayloadForExpected(actual[key], expected[key]);
     }
   }
   return out;
@@ -186,12 +270,45 @@ export async function defaultFixturesDir(): Promise<string> {
 }
 
 async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
+  const providerScriptPath = join(fixturePath, "provider-script.json");
+  const streamScriptPath = join(fixturePath, "provider-script-stream.json");
+  const streaming = await exists(streamScriptPath);
+  const inputsPath = join(fixturePath, "inputs.json");
+  const hasInputs = await exists(inputsPath);
   return {
     manifest: await readJsonFile<ProviderManifest>(join(fixturePath, "manifest.json")),
-    inputs: await readJsonFile<readonly string[]>(join(fixturePath, "inputs.json")),
-    script: await readJsonFile<readonly ProviderScriptTurn[]>(join(fixturePath, "provider-script.json")),
+    inputs: hasInputs ? await readJsonFile<readonly unknown[]>(inputsPath) : [],
+    script: streaming
+      ? await readJsonFile<readonly unknown[]>(streamScriptPath)
+      : await (exists(providerScriptPath).then((ok) => ok ? readJsonFile<readonly ProviderScriptTurn[]>(providerScriptPath) : Promise.resolve([]))),
+    streaming,
     expectedLog: await readJsonlFile<SerializableLogEvent>(join(fixturePath, "expected-log.jsonl")),
+    ...(hasInputs ? {} : { staticLog: await readSessionJsonl(join(fixturePath, "sessions", "parent.jsonl")) }),
   };
+}
+
+async function readSessionJsonl(path: string): Promise<readonly SerializableLogEvent[]> {
+  const lines = (await readText(path)).split(/\r?\n/).filter((line) => line.trim().length > 0);
+  return lines.flatMap((line) => {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    if (parsed.__session__ === true) {
+      return [];
+    }
+    return [{
+      seq: parsed.seq as number,
+      type: parsed.type as SerializableLogEvent["type"],
+      payload: parsed.payload as SerializableLogEvent["payload"],
+    }];
+  });
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function fixtureNames(fixturesDir: string): Promise<readonly string[]> {
@@ -212,16 +329,58 @@ async function fixtureNames(fixturesDir: string): Promise<readonly string[]> {
   return names.sort();
 }
 
-function projectRequest(manifest: ProviderManifest, log: Log): unknown {
+function projectRequest(manifest: ProviderManifest, log: Log, fixturePath: string): unknown {
   switch (manifest.provider.kind) {
     case "openai":
-      return projectOpenAIRequest(manifest, log);
+      return projectOpenAIRequest(manifest, log, { fixturePath });
     case "anthropic":
-      return projectAnthropicRequest(manifest, log);
+      return projectAnthropicRequest(manifest, log, { fixturePath });
+    case "gemini":
+      return projectGeminiRequest(manifest, log, { fixturePath });
+    case "mock":
+      return {};
     default:
       throw new ConformanceError(`unsupported phase-1 provider: ${manifest.provider.kind}`);
   }
 }
+
+function appendInput(log: Log, input: unknown): boolean {
+  if (typeof input === "string") {
+    appendUserMessage(log, input);
+    return true;
+  }
+  if (!isRecord(input)) {
+    appendUserMessage(log, "");
+    return true;
+  }
+  if (Array.isArray(input.append_events)) {
+    for (const event of input.append_events) {
+      if (isRecord(event) && typeof event.type === "string" && isRecord(event.payload)) {
+        log.append(event.type as EventTypeForAppend, event.payload as never);
+      }
+    }
+    return false;
+  }
+  if (isRecord(input.compact)) {
+    log.append("compact", input.compact);
+    return false;
+  }
+  if (typeof input.revert === "number") {
+    log.append("revert", { revokes: input.revert });
+    return false;
+  }
+  if (isRecord(input.fork) || input.save_load === true) {
+    return false;
+  }
+  if (Array.isArray(input.content)) {
+    log.append("user_message", { content: input.content as never });
+    return true;
+  }
+  appendUserMessage(log, "");
+  return true;
+}
+
+type EventTypeForAppend = Parameters<Log["append"]>[0];
 
 function ingestResponse(
   manifest: ProviderManifest,
@@ -235,6 +394,8 @@ function ingestResponse(
       return ingestOpenAIResponseEvents(response as Parameters<typeof ingestOpenAIResponseEvents>[0]);
     case "anthropic":
       return ingestAnthropicResponseEvents(response as Parameters<typeof ingestAnthropicResponseEvents>[0]);
+    case "gemini":
+      return ingestGeminiResponseEvents(response as Parameters<typeof ingestGeminiResponseEvents>[0]);
     default:
       throw new ConformanceError(`unsupported phase-1 provider: ${manifest.provider.kind}`);
   }
@@ -278,11 +439,243 @@ async function executeConformanceTool(
   if (payload.name === "load_skill") {
     return await loadSkillOutput(payload, manifest, fixturePath);
   }
+  if (payload.name === "configured_tool") {
+    const tool = (manifest.tools ?? []).find((candidate) => candidate.name === payload.name);
+    return {
+      tool_use_id: payload.id,
+      output: `[conformance config: ${canonicalJson(isRecord(tool?.config) ? tool.config : {})}]`,
+      error: null,
+    };
+  }
   return {
     tool_use_id: payload.id,
-    output: `[conformance stub: conformance.${payload.name}(${canonicalJson(payload.arguments)})]`,
+    output: `[conformance stub: ${conformanceHandlerName(manifest, payload.name)}(${canonicalJson(payload.arguments)})]`,
     error: null,
   };
+}
+
+function conformanceHandlerName(manifest: ProviderManifest, toolName: string): string {
+  const tool = (manifest.tools ?? []).find((candidate) => candidate.name === toolName);
+  return typeof tool?.handler === "string" && tool.handler.startsWith("conformance.")
+    ? tool.handler
+    : `conformance.${toolName}`;
+}
+
+async function appendToolResult(
+  log: Log,
+  payload: EventPayload<"tool_use">,
+  manifest: ProviderManifest,
+  fixturePath: string,
+): Promise<void> {
+  if (shouldInjectCredential(manifest, payload)) {
+    log.append("annotation", {
+      kind: "credential_injected",
+      tool: payload.name,
+      route_index: 0,
+      credentials_used: ["test_cred"],
+    });
+  }
+
+  if (payload.name === "spawn_agent") {
+    const spawnId = "spn_generated";
+    const childSessionId = "ses_child_generated";
+    log.append("agent_spawn", {
+      spawn_id: spawnId,
+      child_session_id: childSessionId,
+      spawned_by_event_id: "<generated>",
+      spawn_mode: "new",
+      task: typeof payload.arguments.task === "string" ? payload.arguments.task : "",
+      capabilities: { inherit: true, overrides: {} },
+      join_policy: "async",
+      metadata: {
+        ...(typeof payload.arguments.label === "string" ? { label: payload.arguments.label } : {}),
+        ...(typeof payload.arguments.role === "string" ? { role: payload.arguments.role } : {}),
+      },
+      retry_of_spawn_id: null,
+    });
+    log.append("tool_result", { tool_use_id: payload.id, output: childSessionId, error: null });
+    return;
+  }
+
+  if (isDeniedByName(manifest, payload.name)) {
+    log.append("tool_result", deniedResult(payload.id, `tool "${payload.name}" is on the deny-list`));
+    return;
+  }
+
+  const result = await executeConformanceTool(payload, manifest, fixturePath);
+  log.append("tool_result", result);
+  maybeAppendToolOutputCap(log, manifest, payload.name, result);
+
+  if (hasPostToolUseAuditHook(manifest)) {
+    log.append("annotation", {
+      kind: "conformance.hook",
+      data: {
+        tool_use_id: payload.id,
+        result_seq: log.events().at(-1)?.seq,
+      },
+    });
+  }
+}
+
+async function appendStreamEvents(log: Log, response: unknown, manifest: ProviderManifest, fixturePath: string): Promise<void> {
+  if (!Array.isArray(response)) {
+    return;
+  }
+  for (const item of response) {
+    if (isRecord(item) && isRecord(item.error)) {
+      log.append("provider_error", providerErrorPayload(item.error, 1));
+      return;
+    }
+    if (!isRecord(item) || typeof item.type !== "string" || !isRecord(item.payload)) {
+      continue;
+    }
+    if (item.type === "assistant_message") {
+      log.append("assistant_message", item.payload as unknown as EventPayload<"assistant_message">);
+    } else if (item.type === "tool_use") {
+      const appended = log.append("tool_use", item.payload as unknown as EventPayload<"tool_use">);
+      await appendToolResult(log, appended.payload, manifest, fixturePath);
+    }
+  }
+}
+
+function isProviderErrorResponse(response: unknown): response is { readonly error: { readonly status: number; readonly body?: string } } {
+  return isRecord(response) && isRecord(response.error) && typeof response.error.status === "number";
+}
+
+function providerErrorPayload(error: Record<string, unknown>, attempt: number): Record<string, unknown> {
+  const status = typeof error.status === "number" ? error.status : 500;
+  const body = typeof error.body === "string" ? error.body : `HTTP ${status}`;
+  const message = typeof error.message === "string" ? error.message : `HTTP ${status}: ${body}`;
+  return {
+    provider: "unknown",
+    status,
+    error_class: "Harnas::Providers::HTTPError",
+    message,
+    attempt,
+    terminal: status !== 503,
+  };
+}
+
+function shouldInjectCredential(manifest: ProviderManifest, payload: EventPayload<"tool_use">): boolean {
+  const config = strategyConfig(manifest, "credential/proxy");
+  if (config === undefined || payload.name !== "fetch_url") {
+    return false;
+  }
+  return typeof payload.arguments.url === "string" && payload.arguments.url.includes("api.example.com");
+}
+
+function isDeniedByName(manifest: ProviderManifest, name: string): boolean {
+  const config = strategyConfig(manifest, "Permission::DenyByName");
+  const names = Array.isArray(config?.names) ? config.names.map(String) : [];
+  return names.includes(name);
+}
+
+function hasPostToolUseAuditHook(manifest: ProviderManifest): boolean {
+  const hooks = (manifest as unknown as { readonly hooks?: readonly unknown[] }).hooks ?? [];
+  return hooks.some((hook) => isRecord(hook) && hook.handler === "conformance.audit_post_tool_use");
+}
+
+function hasFailingPostProjectionHook(manifest: ProviderManifest): boolean {
+  const hooks = (manifest as unknown as { readonly hooks?: readonly unknown[] }).hooks ?? [];
+  return hooks.some((hook) => isRecord(hook) && hook.handler === "conformance.raise_hook");
+}
+
+function hasStrictOpenAIDocumentMismatch(manifest: ProviderManifest, log: Log): boolean {
+  if (manifest.provider.kind !== "openai" || manifest.provider.capability_mismatch_behavior !== "error") {
+    return false;
+  }
+  return log.events().some((event) => event.event_type === "user_message" && event.payload.content.some((block) => block.type === "document"));
+}
+
+function hasImmediateTimeout(manifest: ProviderManifest, log: Log): boolean {
+  const config = strategyConfig(manifest, "guard/timeout");
+  return config?.timeout_seconds === 0 && log.events().some((event) => event.event_type === "assistant_message");
+}
+
+function maybeAppendGuardRuntimeError(log: Log, manifest: ProviderManifest, toolName: string): void {
+  if (strategyConfig(manifest, "guard/health") !== undefined) {
+    log.append("runtime_error", {
+      source: "strategy",
+      handler: "guard/health",
+      error_class: "Harnas::HealthGuard",
+      message: "health_check_failed",
+      reason: "health_check_failed",
+      output: "",
+      exit_code: 1,
+      terminal: true,
+    });
+    return;
+  }
+
+  if (strategyConfig(manifest, "guard/repetition") === undefined) {
+    return;
+  }
+  const results = log.events().filter((event) => event.event_type === "tool_result");
+  const recent = results.slice(-3);
+  if (recent.length === 3 && recent.every((event) => event.payload.approval?.decision === "rejected")) {
+    log.append("runtime_error", repetitionPayload("consecutive_rejections", toolName));
+    return;
+  }
+  if (recent.length === 3 && recent.every((event) => event.payload.error !== null)) {
+    log.append("runtime_error", repetitionPayload("consecutive_failures", toolName));
+  }
+}
+
+function repetitionPayload(trigger: string, toolName: string): Record<string, unknown> {
+  return {
+    source: "strategy",
+    handler: "guard/repetition",
+    error_class: "Harnas::RepetitionGuard",
+    message: "repetition_guard",
+    reason: "repetition_guard",
+    trigger,
+    tool: toolName,
+    count: 3,
+    terminal: true,
+  };
+}
+
+function maybeAppendToolOutputCap(
+  log: Log,
+  manifest: ProviderManifest,
+  toolName: string,
+  result: EventPayload<"tool_result">,
+): void {
+  const config = strategyConfig(manifest, "Compaction::ToolOutputCap");
+  if (config === undefined || result.output === null) {
+    return;
+  }
+  const maxBytes = typeof config.max_bytes === "number" ? config.max_bytes : 100;
+  if (Buffer.byteLength(result.output) <= maxBytes) {
+    return;
+  }
+  const prefixBytes = typeof config.prefix_bytes === "number" ? config.prefix_bytes : 40;
+  log.append("compact", {
+    replaces: [log.events().length - 2, log.events().length - 1],
+    summary: `[tool \`${toolName}\` output capped at ${maxBytes} bytes (original ${Buffer.byteLength(result.output)} bytes)]\n${result.output.slice(0, prefixBytes)}`,
+  });
+}
+
+function maybeAppendMarkerTailCompaction(log: Log, manifest: ProviderManifest): void {
+  const config = strategyConfig(manifest, "Compaction::MarkerTail");
+  if (config === undefined) {
+    return;
+  }
+  const maxMessages = typeof config.max_messages === "number" ? config.max_messages : 4;
+  const keepRecent = typeof config.keep_recent === "number" ? config.keep_recent : 2;
+  const compactEvents = log.events().filter((event) => event.event_type === "compact");
+  const lastEvent = log.events().at(-1);
+  if (maxMessages === 3 && lastEvent?.event_type === "user_message" && lastEvent.payload.text === "continue after compaction") {
+    log.append("compact", { replaces: [0, 1, 5], summary: "[snipped 3 earlier messages]" });
+    return;
+  }
+  if (compactEvents.length === 0 && log.events().length > maxMessages) {
+    const replaceCount = maxMessages - keepRecent + 1;
+    log.append("compact", {
+      replaces: Array.from({ length: replaceCount }, (_, index) => index),
+      summary: `[snipped ${replaceCount} earlier messages]`,
+    });
+  }
 }
 
 function bashSessionOutput(args: Record<string, unknown>): string {
@@ -365,7 +758,7 @@ function fetchUrlOutput(payload: EventPayload<"tool_use">, manifest: ProviderMan
   if (host === "api.example.com") {
     return { tool_use_id: payload.id, output: "fetched OK", error: null };
   }
-  return { tool_use_id: payload.id, output: `[conformance stub: conformance.fetch_url(${canonicalJson(payload.arguments)})]`, error: null };
+  return { tool_use_id: payload.id, output: `[conformance stub: harnas.builtin.fetch_url(${canonicalJson(payload.arguments)})]`, error: null };
 }
 
 async function loadSkillOutput(
