@@ -15,7 +15,7 @@ export async function readFileBuiltin(args: ReadFileArgs): Promise<string> {
     throw new Error(`Cannot read binary file '${args.path}'. Use bash_session to inspect binary files.`);
   }
 
-  const text = bytes.toString("utf8");
+  const text = bytes.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (text.length === 0) {
     return "... [file has 0 total lines; showing 0-0]\n";
   }

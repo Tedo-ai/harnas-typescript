@@ -9,6 +9,8 @@
 - Added `expected-projections.jsonl` assertions to the conformance runner for
   subagent delegation fixtures.
 - Exported the Gemini projection and ingestor from the public package surface.
+- Hardened text fixture handling and CI fixture checkout against Windows CRLF
+  conversion.
 
 ## [0.2.0] — 2026-05-24
 

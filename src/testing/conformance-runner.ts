@@ -1030,6 +1030,7 @@ async function readText(path: string): Promise<string> {
 }
 
 function stripFrontmatter(text: string): string {
+  text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!text.startsWith("---\n")) {
     return text;
   }

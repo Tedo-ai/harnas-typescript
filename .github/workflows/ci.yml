@@ -20,7 +20,7 @@ jobs:
         node-version: [20.x, 22.x]
     steps:
       - uses: actions/checkout@v4
-      - run: git clone --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas harnas-spec
+      - run: git clone -c core.autocrlf=false --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas harnas-spec
 
       - uses: actions/setup-node@v4
         with:
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: git clone --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas harnas-spec
+      - run: git clone -c core.autocrlf=false --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas harnas-spec
 
       - uses: actions/setup-node@v4
         with:
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: git clone --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas harnas-spec
+      - run: git clone -c core.autocrlf=false --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas harnas-spec
 
       - uses: actions/setup-node@v4
         with:
