@@ -25,6 +25,10 @@
       "types": "./dist/projections/provider/anthropic.d.ts",
       "default": "./dist/projections/provider/anthropic.js"
     },
+    "./projections/gemini": {
+      "types": "./dist/projections/provider/gemini.d.ts",
+      "default": "./dist/projections/provider/gemini.js"
+    },
     "./builtins": {
       "types": "./dist/builtins/index.d.ts",
       "default": "./dist/builtins/index.js"

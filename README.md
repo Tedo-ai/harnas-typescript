@@ -2,11 +2,10 @@
 
 TypeScript reference implementation of [Harnas](https://github.com/Tedo-ai/harnas).
 
-**Version 0.2.0** is the post-v0.19 foundation milestone. It keeps the
+**Version 0.2.0** is the post-v0.19 development milestone. It keeps the
 strict TypeScript package scaffold, JSONL Session persistence,
-manifest-schema validation, observation bus, minimal provider projection
-and scripted conformance runner, and updates the package identity to
-`@tedo-ai/harnas-typescript`.
+manifest-schema validation, observation bus, provider projections, ingestors,
+and a scripted conformance runner for `@tedo-ai/harnas-typescript`.
 
 Runtime targets:
 
@@ -23,7 +22,9 @@ npm install
 npm run typecheck
 npm test
 npm run test:conformance:node
-npm run test:conformance:node:all # shows the current full v0.19 gap
+npm run test:conformance:node:all
+npm run test:conformance:bun
+npm run test:conformance:deno
 ```
 
 Set `HARNAS_FIXTURES` to a spec checkout's `conformance/agents` directory
@@ -40,7 +41,11 @@ appendUserMessage(log, "hello");
 
 ## Status
 
-- Foundation conformance: `minimal-chat` and `with-system-prompt-openai`
-- Full v0.19.0 conformance target: 65/65 fixtures for v1.0.0
+- v0.19.0 fixture runner: 65/65 fixtures locally, including
+  `expected-projections.jsonl` assertions for subagent fixtures
+- CI runs the v0.19.0 fixture suite on Node 20/22 across Linux, macOS, and
+  Windows, plus Bun and Deno smoke runtimes
+- v1.0.0 still requires the cross-language round-trip matrix and release
+  review
 - Future contrib layout reserved with the `@tedo-ai/harnas-typescript/mcp`
   subpath export; core does not depend on MCP.

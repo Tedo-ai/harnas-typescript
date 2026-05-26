@@ -52,7 +52,7 @@ jobs:
           bun-version: latest
 
       - run: npm ci
-      - run: bun test tests/conformance/bun.test.ts
+      - run: npm run test:conformance:bun
         env:
           HARNAS_SPEC: ${{ github.workspace }}/harnas-spec
 
@@ -73,6 +73,6 @@ jobs:
           deno-version: v2.x
 
       - run: npm ci
-      - run: deno test --sloppy-imports --allow-read --allow-env --allow-sys=uid tests/conformance/deno.test.ts
+      - run: npm run test:conformance:deno
         env:
           HARNAS_SPEC: ${{ github.workspace }}/harnas-spec

@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Expanded Node, Bun, and Deno conformance tests to run the full v0.19.0
+  fixture suite instead of the initial two-fixture smoke subset.
+- Added `expected-projections.jsonl` assertions to the conformance runner for
+  subagent delegation fixtures.
+- Exported the Gemini projection and ingestor from the public package surface.
+
 ## [0.2.0] — 2026-05-24
 
 ### Changed

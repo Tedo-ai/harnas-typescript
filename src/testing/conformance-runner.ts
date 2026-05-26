@@ -43,7 +43,29 @@ interface FixtureFiles {
   readonly script: readonly unknown[];
   readonly streaming: boolean;
   readonly expectedLog: readonly SerializableLogEvent[];
+  readonly expectedProjections?: readonly ProjectionExpectation[];
   readonly staticLog?: readonly SerializableLogEvent[];
+  readonly staticSessions?: ReadonlyMap<string, SessionFixture>;
+}
+
+interface ProjectionExpectation {
+  readonly projection: string;
+  readonly input: string;
+  readonly output: unknown;
+}
+
+interface SessionFixture {
+  readonly id: string;
+  readonly header: Record<string, unknown>;
+  readonly events: readonly SessionFixtureEvent[];
+}
+
+interface SessionFixtureEvent {
+  readonly seq: number;
+  readonly id: string;
+  readonly type: string;
+  readonly payload: Record<string, unknown>;
+  readonly timestamp?: string;
 }
 
 export async function runFixture(fixturePath: string): Promise<FixtureResult> {
@@ -58,6 +80,7 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
           `log mismatch\nactual:   ${canonicalJson(actual)}\nexpected: ${canonicalJson(files.expectedLog)}`,
         );
       }
+      assertExpectedProjections(files);
       return { name, passed: true };
     }
     const runtime = buildRuntime({ manifest });
@@ -276,6 +299,14 @@ async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
   const streaming = await exists(streamScriptPath);
   const inputsPath = join(fixturePath, "inputs.json");
   const hasInputs = await exists(inputsPath);
+  const projectionsPath = join(fixturePath, "expected-projections.jsonl");
+  const sessionsPath = join(fixturePath, "sessions");
+  const expectedProjections = await exists(projectionsPath)
+    ? await readJsonlFile<ProjectionExpectation>(projectionsPath)
+    : undefined;
+  const staticSessions = !hasInputs || expectedProjections !== undefined
+    ? await readSessionFixtures(sessionsPath)
+    : undefined;
   return {
     manifest: await readJsonFile<ProviderManifest>(join(fixturePath, "manifest.json")),
     inputs: hasInputs ? await readJsonFile<readonly unknown[]>(inputsPath) : [],
@@ -284,23 +315,214 @@ async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
       : await (exists(providerScriptPath).then((ok) => ok ? readJsonFile<readonly ProviderScriptTurn[]>(providerScriptPath) : Promise.resolve([]))),
     streaming,
     expectedLog: await readJsonlFile<SerializableLogEvent>(join(fixturePath, "expected-log.jsonl")),
-    ...(hasInputs ? {} : { staticLog: await readSessionJsonl(join(fixturePath, "sessions", "parent.jsonl")) }),
+    ...(expectedProjections === undefined ? {} : { expectedProjections }),
+    ...(staticSessions === undefined ? {} : { staticSessions }),
+    ...(hasInputs ? {} : { staticLog: sessionLogFromFile(await readSessionFile(join(sessionsPath, "parent.jsonl"))) }),
   };
 }
 
-async function readSessionJsonl(path: string): Promise<readonly SerializableLogEvent[]> {
+async function readSessionFixtures(path: string): Promise<ReadonlyMap<string, SessionFixture>> {
+  const sessions = new Map<string, SessionFixture>();
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+      continue;
+    }
+    const session = await readSessionFile(join(path, entry.name));
+    sessions.set(session.id, session);
+  }
+  return sessions;
+}
+
+async function readSessionFile(path: string): Promise<SessionFixture> {
   const lines = (await readText(path)).split(/\r?\n/).filter((line) => line.trim().length > 0);
-  return lines.flatMap((line) => {
+  let header: Record<string, unknown> | undefined;
+  const events: SessionFixtureEvent[] = [];
+  for (const line of lines) {
     const parsed = JSON.parse(line) as Record<string, unknown>;
     if (parsed.__session__ === true) {
-      return [];
+      header = parsed;
+      continue;
     }
-    return [{
+    events.push({
       seq: parsed.seq as number,
-      type: parsed.type as SerializableLogEvent["type"],
-      payload: parsed.payload as SerializableLogEvent["payload"],
-    }];
+      id: String(parsed.id ?? ""),
+      type: String(parsed.type),
+      payload: isRecord(parsed.payload) ? parsed.payload : {},
+      ...(typeof parsed.timestamp === "string" ? { timestamp: parsed.timestamp } : {}),
+    });
+  }
+  if (header === undefined || typeof header.id !== "string") {
+    throw new ConformanceError(`session fixture ${path} is missing a session header`);
+  }
+  return { id: header.id, header, events };
+}
+
+function sessionLogFromFile(session: SessionFixture): readonly SerializableLogEvent[] {
+  return session.events.map((event) => ({
+    seq: event.seq,
+    type: event.type as SerializableLogEvent["type"],
+    payload: event.payload as SerializableLogEvent["payload"],
+    ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
+  }));
+}
+
+function assertExpectedProjections(files: FixtureFiles): void {
+  if (files.expectedProjections === undefined) {
+    return;
+  }
+  if (files.staticSessions === undefined) {
+    throw new ConformanceError("expected projections require session fixtures");
+  }
+  const actual = files.expectedProjections.map((expectation) => ({
+    projection: expectation.projection,
+    input: expectation.input,
+    output: projectSessionFixture(files.staticSessions as ReadonlyMap<string, SessionFixture>, expectation.projection, expectation.input),
+  }));
+  if (canonicalJson(actual) !== canonicalJson(files.expectedProjections)) {
+    throw new ConformanceError(
+      `projection mismatch\nactual:   ${canonicalJson(actual)}\nexpected: ${canonicalJson(files.expectedProjections)}`,
+    );
+  }
+}
+
+function projectSessionFixture(
+  sessions: ReadonlyMap<string, SessionFixture>,
+  projection: string,
+  input: string,
+): unknown {
+  switch (projection) {
+    case "delegation_tree":
+      return delegationTree(sessions, input);
+    case "open_children":
+      return openChildren(sessions, input);
+    case "descendant_usage":
+      return descendantUsage(sessions, input);
+    case "descendant_timeline":
+      return descendantTimeline(sessions, input);
+    default:
+      throw new ConformanceError(`unsupported projection fixture: ${projection}`);
+  }
+}
+
+function delegationTree(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): Record<string, unknown> {
+  const session = requireSession(sessions, sessionId);
+  return {
+    session_id: sessionId,
+    children: session.events
+      .filter((event) => event.type === "agent_spawn")
+      .map((event) => delegationTreeChild(sessions, event.payload)),
+  };
+}
+
+function delegationTreeChild(sessions: ReadonlyMap<string, SessionFixture>, spawn: Record<string, unknown>): Record<string, unknown> {
+  const spawnId = String(spawn.spawn_id ?? "");
+  const childSessionId = String(spawn.child_session_id ?? "");
+  const result = findAgentResult(sessions, spawnId);
+  const resultPayload = result?.payload;
+  return {
+    spawn_id: spawnId,
+    child_session_id: childSessionId,
+    task: String(spawn.task ?? ""),
+    join_policy: String(spawn.join_policy ?? "async"),
+    metadata: isRecord(spawn.metadata) ? spawn.metadata : {},
+    status: String(resultPayload?.status ?? "open"),
+    result: resultPayload?.result ?? null,
+    error: resultPayload?.error ?? null,
+    children: delegationTree(sessions, childSessionId).children,
+  };
+}
+
+function openChildren(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): readonly string[] {
+  const session = requireSession(sessions, sessionId);
+  const completed = new Set(
+    session.events
+      .filter((event) => event.type === "agent_result")
+      .map((event) => String(event.payload.spawn_id ?? "")),
+  );
+  return session.events
+    .filter((event) => event.type === "agent_spawn")
+    .map((event) => String(event.payload.spawn_id ?? ""))
+    .filter((spawnId) => !completed.has(spawnId));
+}
+
+function descendantUsage(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): Record<string, number> {
+  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  for (const id of descendantSessionIds(sessions, sessionId)) {
+    for (const event of requireSession(sessions, id).events) {
+      if (!isRecord(event.payload.usage)) {
+        continue;
+      }
+      usage.prompt_tokens += numericUsage(event.payload.usage, "prompt_tokens", "input_tokens");
+      usage.completion_tokens += numericUsage(event.payload.usage, "completion_tokens", "output_tokens");
+      usage.total_tokens += numericUsage(event.payload.usage, "total_tokens");
+    }
+  }
+  return usage;
+}
+
+function descendantTimeline(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): readonly Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  for (const id of descendantSessionIds(sessions, sessionId)) {
+    for (const event of requireSession(sessions, id).events) {
+      const timestamp = typeof event.payload.timestamp === "string" ? event.payload.timestamp : event.timestamp ?? "";
+      rows.push({
+        session_id: id,
+        seq: event.seq,
+        id: event.id,
+        type: event.type,
+        payload: event.payload,
+        timestamp,
+      });
+    }
+  }
+  return rows.sort((left, right) => {
+    const byTimestamp = String(left.timestamp).localeCompare(String(right.timestamp));
+    if (byTimestamp !== 0) {
+      return byTimestamp;
+    }
+    const bySession = String(left.session_id).localeCompare(String(right.session_id));
+    if (bySession !== 0) {
+      return bySession;
+    }
+    return Number(left.seq) - Number(right.seq);
   });
+}
+
+function descendantSessionIds(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): readonly string[] {
+  const ids: string[] = [];
+  const visit = (id: string): void => {
+    ids.push(id);
+    for (const event of requireSession(sessions, id).events) {
+      if (event.type === "agent_spawn" && typeof event.payload.child_session_id === "string") {
+        visit(event.payload.child_session_id);
+      }
+    }
+  };
+  visit(sessionId);
+  return ids;
+}
+
+function findAgentResult(sessions: ReadonlyMap<string, SessionFixture>, spawnId: string): SessionFixtureEvent | undefined {
+  for (const session of sessions.values()) {
+    const found = session.events.find((event) => event.type === "agent_result" && event.payload.spawn_id === spawnId);
+    if (found !== undefined) {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+function numericUsage(usage: Record<string, unknown>, primary: string, fallback?: string): number {
+  const value = usage[primary] ?? (fallback === undefined ? undefined : usage[fallback]);
+  return typeof value === "number" ? value : 0;
+}
+
+function requireSession(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): SessionFixture {
+  const session = sessions.get(sessionId);
+  if (session === undefined) {
+    throw new ConformanceError(`projection references missing session ${sessionId}`);
+  }
+  return session;
 }
 
 async function exists(path: string): Promise<boolean> {

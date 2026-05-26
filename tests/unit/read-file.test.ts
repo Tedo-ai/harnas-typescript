@@ -6,7 +6,7 @@ import { readFileBuiltin } from "../../src/builtins/index.js";
 
 describe("readFileBuiltin", () => {
   it("returns cat -n style line numbers", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "harnas-ts-"));
+    const dir = await mkdtemp(join(tmpdir(), "harnas-typescript-"));
     const file = join(dir, "sample.txt");
     await writeFile(file, "alpha\nbeta\ngamma\n", "utf8");
 
@@ -14,7 +14,7 @@ describe("readFileBuiltin", () => {
   });
 
   it("supports offset and limit with a truncation footer", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "harnas-ts-"));
+    const dir = await mkdtemp(join(tmpdir(), "harnas-typescript-"));
     const file = join(dir, "sample.txt");
     await writeFile(file, "one\ntwo\nthree\nfour\n", "utf8");
 
@@ -24,7 +24,7 @@ describe("readFileBuiltin", () => {
   });
 
   it("refuses binary files", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "harnas-ts-"));
+    const dir = await mkdtemp(join(tmpdir(), "harnas-typescript-"));
     const file = join(dir, "bin.dat");
     await writeFile(file, Buffer.from([1, 2, 0, 3]));
 
