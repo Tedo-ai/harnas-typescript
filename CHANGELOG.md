@@ -4,8 +4,15 @@
 
 ### Changed
 
-- Updated the conformance target to fixtures v0.19.1: 66/66, including
-  the Anthropic text-plus-reasoning projection guard.
+- Updated the conformance target to fixtures v0.19.2: 69/69, including
+  the Anthropic text-plus-reasoning projection guard and text-plus-tool
+  projection guards for Anthropic, OpenAI, and Gemini.
+- Fixed OpenAI projection so assistant messages with tool calls preserve
+  non-empty assistant text in later requests.
+- Fixed Gemini projection so prior tool calls and tool results project back as
+  `functionCall` and `functionResponse` parts in later requests.
+- Scoped Gemini-generated tool call IDs to the current Session/Log instead of
+  a process-global counter so conformance fixtures remain isolated.
 - Expanded Node, Bun, and Deno conformance tests to run the full v0.19.x
   fixture suite instead of the initial two-fixture smoke subset.
 - Added `expected-projections.jsonl` assertions to the conformance runner for

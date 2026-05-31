@@ -177,7 +177,7 @@ export async function runScriptedSession(
         continue;
       }
 
-      const events = ingestResponse(runtime.manifest, response);
+      const events = ingestResponse(runtime.manifest, response, log);
       let sawToolUse = false;
       let stopReason: unknown;
       for (const event of events) {
@@ -469,6 +469,7 @@ type EventTypeForAppend = Parameters<Log["append"]>[0];
 function ingestResponse(
   manifest: ProviderManifest,
   response: unknown,
+  log: Log,
 ): Array<
   | { readonly type: "assistant_message"; readonly payload: EventPayload<"assistant_message"> }
   | { readonly type: "tool_use"; readonly payload: EventPayload<"tool_use"> }
@@ -479,10 +480,20 @@ function ingestResponse(
     case "anthropic":
       return ingestAnthropicResponseEvents(response as Parameters<typeof ingestAnthropicResponseEvents>[0]);
     case "gemini":
-      return ingestGeminiResponseEvents(response as Parameters<typeof ingestGeminiResponseEvents>[0]);
+      return ingestGeminiResponseEvents(response as Parameters<typeof ingestGeminiResponseEvents>[0], {
+        toolCallOffset: geminiToolCallOffset(log),
+      });
     default:
       throw new ConformanceError(`unsupported phase-1 provider: ${manifest.provider.kind}`);
   }
+}
+
+function geminiToolCallOffset(log: Log): number {
+  return log.events().filter((event) =>
+    event.event_type === "tool_use" &&
+    typeof event.payload.id === "string" &&
+    event.payload.id.startsWith("gemini.")
+  ).length;
 }
 
 async function executeConformanceTool(

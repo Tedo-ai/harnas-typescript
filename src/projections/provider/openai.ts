@@ -64,7 +64,8 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, optio
         scan += 1;
       }
       if (toolCalls.length > 0) {
-        messages.push({ role: "assistant", content: null, tool_calls: toolCalls });
+        const text = messageText(event.payload);
+        messages.push({ role: "assistant", content: text.length > 0 ? text : null, tool_calls: toolCalls });
       } else {
         messages.push({ role: "assistant", content: messageText(event.payload) });
       }

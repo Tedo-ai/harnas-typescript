@@ -16,14 +16,18 @@ export interface GeminiResponse {
   readonly usageMetadata?: Record<string, unknown>;
 }
 
-let geminiToolCounter = 0;
+export interface GeminiIngestOptions {
+  readonly toolCallOffset?: number;
+}
 
 export function ingestGeminiResponseEvents(
   response: GeminiResponse,
+  options: GeminiIngestOptions = {},
 ): Array<
   | { readonly type: "assistant_message"; readonly payload: EventPayload<"assistant_message"> }
   | { readonly type: "tool_use"; readonly payload: EventPayload<"tool_use"> }
 > {
+  let geminiToolCounter = options.toolCallOffset ?? 0;
   const parts = response.candidates?.[0]?.content?.parts ?? [];
   const text = parts.map((part) => part.text ?? "").join("");
   const toolCalls = parts.flatMap((part) => part.functionCall === undefined ? [] : [part.functionCall]);

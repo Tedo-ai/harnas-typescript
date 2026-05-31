@@ -21,21 +21,41 @@ export interface GeminiRequest {
 }
 
 export function projectGeminiRequest(manifest: ProviderManifest, log: Log, options: ProjectionOptions = {}): GeminiRequest {
-  const contents: GeminiRequest["contents"][number][] = [];
+  const contents: { role: "user" | "model"; parts: unknown[] }[] = [];
+  const toolUseNames = new Map<string, string>();
+  for (const event of log.events()) {
+    if (event.event_type === "tool_use") {
+      toolUseNames.set(event.payload.id, event.payload.name);
+    }
+  }
   for (const event of log.events()) {
     if (event.event_type === "user_message") {
       contents.push({ role: "user", parts: geminiParts(event.payload, options) });
     } else if (event.event_type === "assistant_message") {
       contents.push({ role: "model", parts: messageText(event.payload).length > 0 ? [{ text: messageText(event.payload) }] : [] });
+    } else if (event.event_type === "tool_use") {
+      const part = {
+        functionCall: {
+          name: event.payload.name,
+          args: event.payload.arguments,
+        },
+      };
+      const previous = contents.at(-1);
+      if (previous?.role === "model") {
+        previous.parts.push(part);
+      } else {
+        contents.push({ role: "model", parts: [part] });
+      }
     } else if (event.event_type === "tool_result") {
-      const toolUse = log.events().find((candidate) => candidate.event_type === "tool_use" && candidate.payload.id === event.payload.tool_use_id);
       contents.push({
         role: "user",
         parts: [
           {
             functionResponse: {
-              name: toolUse?.event_type === "tool_use" ? toolUse.payload.name : event.payload.tool_use_id,
-              response: { result: event.payload.output ?? event.payload.error ?? "" },
+              name: toolUseNames.get(event.payload.tool_use_id) ?? event.payload.tool_use_id,
+              response: event.payload.error !== null && event.payload.error !== undefined
+                ? { error: event.payload.error }
+                : { content: event.payload.output ?? "" },
             },
           },
         ],
