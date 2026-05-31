@@ -37,6 +37,10 @@
       "types": "./dist/mcp/index.d.ts",
       "default": "./dist/mcp/index.js"
     },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
+    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"

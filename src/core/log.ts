@@ -1,4 +1,5 @@
 import { eventIdForSeq } from "./ids.js";
+import type { EventId } from "./ids.js";
 import type { EventPayload, EventType, LogEvent, SerializableLogEvent } from "./events.js";
 import { normalizeMessagePayload } from "./events.js";
 
@@ -10,19 +11,13 @@ export class Log {
   }
 
   append<TType extends EventType>(eventType: TType, payload: EventPayload<TType>): Extract<LogEvent, { event_type: TType }> {
-    const normalizedPayload =
-      eventType === "user_message" || eventType === "assistant_message"
-        ? normalizeMessagePayload(payload)
-        : payload;
-    const event = {
-      seq: this.#events.length,
-      id: eventIdForSeq(this.#events.length),
-      timestamp: new Date().toISOString(),
-      event_type: eventType,
-      payload: normalizedPayload,
-    } as Extract<LogEvent, { event_type: TType }>;
+    const event = createLogEvent(this.#events.length, eventType, payload);
     this.#events.push(event);
     return event;
+  }
+
+  appendExisting(event: LogEvent): void {
+    this.#events.push(event);
   }
 
   events(): readonly LogEvent[] {
@@ -45,6 +40,25 @@ export class Log {
 
 export function appendUserMessage(log: Log, text: string): void {
   log.append("user_message", { content: [{ type: "text", text }], text });
+}
+
+export function createLogEvent<TType extends EventType>(
+  seq: number,
+  eventType: TType,
+  payload: EventPayload<TType>,
+  options: { readonly id?: EventId; readonly timestamp?: string } = {},
+): Extract<LogEvent, { event_type: TType }> {
+  const normalizedPayload =
+    eventType === "user_message" || eventType === "assistant_message"
+      ? normalizeMessagePayload(payload)
+      : payload;
+  return {
+    seq,
+    id: options.id ?? eventIdForSeq(seq),
+    timestamp: options.timestamp ?? new Date().toISOString(),
+    event_type: eventType,
+    payload: normalizedPayload,
+  } as Extract<LogEvent, { event_type: TType }>;
 }
 
 function serializePayload(payload: LogEvent["payload"]): LogEvent["payload"] {

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { LogStore } from "./log-store.js";
 import type { Session } from "../core/session.js";
 import { Session as HarnasSession } from "../core/session.js";
+import { FileStorageAdapter } from "../storage/file-storage-adapter.js";
 
 export class JsonlLogStore implements LogStore {
   readonly #root: string;
@@ -15,7 +16,7 @@ export class JsonlLogStore implements LogStore {
   }
 
   async load(sessionId: string): Promise<Session> {
-    return HarnasSession.load(this.pathFor(sessionId));
+    return HarnasSession.open({ storage: new FileStorageAdapter(this.pathFor(sessionId)) });
   }
 
   pathFor(sessionId: string): string {

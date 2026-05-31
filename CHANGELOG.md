@@ -11,6 +11,8 @@
 - Exported the Gemini projection and ingestor from the public package surface.
 - Hardened text fixture handling and CI fixture checkout against Windows CRLF
   conversion.
+- Added the `StorageAdapter` persistence seam with file-backed and in-memory
+  adapters before the v1.0 API freeze.
 
 ## [0.2.0] — 2026-05-24
 

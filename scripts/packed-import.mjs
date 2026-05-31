@@ -20,7 +20,11 @@ try {
   execFileSync(npm, ["install", join(root, packResult.filename)], { ...npmExecOptions, cwd: testApp, stdio: "ignore" });
   execFileSync(
     "node",
-    ["--input-type=module", "-e", "import('@tedo-ai/harnas-typescript').then(() => console.log('packed import ok'))"],
+    [
+      "--input-type=module",
+      "-e",
+      "await import('@tedo-ai/harnas-typescript'); await import('@tedo-ai/harnas-typescript/storage'); console.log('packed import ok')",
+    ],
     { cwd: testApp, stdio: "inherit" },
   );
 } finally {
