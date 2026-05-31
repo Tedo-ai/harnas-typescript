@@ -4,7 +4,9 @@
 
 ### Changed
 
-- Expanded Node, Bun, and Deno conformance tests to run the full v0.19.0
+- Updated the conformance target to fixtures v0.19.1: 66/66, including
+  the Anthropic text-plus-reasoning projection guard.
+- Expanded Node, Bun, and Deno conformance tests to run the full v0.19.x
   fixture suite instead of the initial two-fixture smoke subset.
 - Added `expected-projections.jsonl` assertions to the conformance runner for
   subagent delegation fixtures.
