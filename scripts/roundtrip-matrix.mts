@@ -28,7 +28,7 @@ const impls: readonly Impl[] = [
   {
     name: "ruby",
     cwd: resolve(process.env.HARNAS_RUBY ?? join(root, "..", "harnas-ruby")),
-    command: ["ruby", "bin/conformance_roundtrip.rb"],
+    command: ["bundle", "exec", "ruby", "bin/conformance_roundtrip.rb"],
   },
   {
     name: "python",
