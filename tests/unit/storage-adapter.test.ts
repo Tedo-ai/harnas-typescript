@@ -31,7 +31,7 @@ describe("StorageAdapter", () => {
 
     expect(event?.event_type).toBe("user_message");
     expect(event?.event_type === "user_message" ? messageText(event.payload) : "").toBe("from disk");
-    await expect(readFile(path, "utf8")).resolves.toContain('"session"');
+    await expect(readFile(path, "utf8")).resolves.toContain('"__session__"');
   });
 
   it("persists header updates through adapters", async () => {

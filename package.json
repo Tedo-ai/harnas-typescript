@@ -17,6 +17,10 @@
       "types": "./dist/log/index.d.ts",
       "default": "./dist/log/index.js"
     },
+    "./projections": {
+      "types": "./dist/projections/index.d.ts",
+      "default": "./dist/projections/index.js"
+    },
     "./projections/openai": {
       "types": "./dist/projections/provider/openai.d.ts",
       "default": "./dist/projections/provider/openai.js"
@@ -59,6 +63,7 @@
     "test": "vitest run tests/unit",
     "test:conformance:node": "tsx --test tests/conformance/node.test.ts",
     "test:conformance:node:all": "tsx src/testing/cli.ts --all",
+    "test:conformance:roundtrip": "tsx scripts/roundtrip-matrix.mts",
     "test:conformance:bun": "bun test tests/conformance/bun.test.ts",
     "test:conformance:deno": "deno test --sloppy-imports --allow-read --allow-env --allow-sys=uid tests/conformance/deno.test.ts",
     "test:conformance:packed": "npm run build && node scripts/packed-import.mjs"

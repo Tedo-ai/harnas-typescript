@@ -42,6 +42,7 @@ function anthropicTurns(log: Log, options: ProjectionOptions): AnthropicMessage[
     } else if (event.event_type === "assistant_message") {
       const toolUses = followingToolUses(log, event.seq);
       if (event.payload.reasoning !== undefined || toolUses.length > 0) {
+        const text = messageText(event.payload);
         turns.push({
           role: "assistant",
           content: [
@@ -50,6 +51,7 @@ function anthropicTurns(log: Log, options: ProjectionOptions): AnthropicMessage[
               thinking: typeof item.text === "string" ? item.text : "",
               ...(typeof item.signature === "string" ? { signature: item.signature } : {}),
             })),
+            ...(text.length > 0 ? [{ type: "text", text }] : []),
             ...toolUses.map((toolUse) => ({
               type: "tool_use",
               id: toolUse.payload.id,

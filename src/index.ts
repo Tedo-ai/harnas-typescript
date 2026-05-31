@@ -29,6 +29,19 @@ export type { Runtime, RuntimeBuildOptions } from "./runtime/build.js";
 export { projectOpenAIRequest } from "./projections/provider/openai.js";
 export { projectAnthropicRequest } from "./projections/provider/anthropic.js";
 export { projectGeminiRequest } from "./projections/provider/gemini.js";
+export {
+  delegationTree,
+  descendantTimeline,
+  descendantUsage,
+  openChildren,
+} from "./projections/delegation.js";
+export type {
+  DelegationTreeChild,
+  DelegationTreeNode,
+  DescendantTimelineEvent,
+  DescendantUsage,
+  SessionResolver,
+} from "./projections/delegation.js";
 export { ingestOpenAIResponse } from "./ingestors/openai.js";
 export { ingestAnthropicResponse } from "./ingestors/anthropic.js";
 export { ingestGeminiResponseEvents } from "./ingestors/gemini.js";

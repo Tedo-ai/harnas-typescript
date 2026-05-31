@@ -23,7 +23,7 @@ try {
     [
       "--input-type=module",
       "-e",
-      "await import('@tedo-ai/harnas-typescript'); await import('@tedo-ai/harnas-typescript/storage'); console.log('packed import ok')",
+      "await import('@tedo-ai/harnas-typescript'); await import('@tedo-ai/harnas-typescript/storage'); await import('@tedo-ai/harnas-typescript/projections'); console.log('packed import ok')",
     ],
     { cwd: testApp, stdio: "inherit" },
   );

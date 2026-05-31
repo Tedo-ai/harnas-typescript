@@ -76,3 +76,37 @@ jobs:
       - run: npm run test:conformance:deno
         env:
           HARNAS_SPEC: ${{ github.workspace }}/harnas-spec
+
+  roundtrip:
+    name: Cross-language round trips
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git clone -c core.autocrlf=false --depth 1 --branch v0.19.0 https://github.com/Tedo-ai/harnas harnas-spec
+      - run: git clone -c core.autocrlf=false --depth 1 https://github.com/Tedo-ai/harnas-go ../harnas-go
+      - run: git clone -c core.autocrlf=false --depth 1 https://github.com/Tedo-ai/harnas-ruby ../harnas-ruby
+      - run: git clone -c core.autocrlf=false --depth 1 https://github.com/Tedo-ai/harnas-python ../harnas-python
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ../harnas-ruby
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: npm ci
+      - run: npm run test:conformance:roundtrip
+        env:
+          HARNAS_SPEC: ${{ github.workspace }}/harnas-spec

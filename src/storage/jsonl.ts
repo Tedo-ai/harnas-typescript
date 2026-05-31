@@ -16,8 +16,9 @@ export function parseSessionJsonl(text: string): SessionSnapshot {
 }
 
 export function sessionJsonl(snapshot: SessionSnapshot): string {
+  const { session_id, ...headerRest } = snapshot.header;
   return jsonlString([
-    { session: snapshot.header },
+    { __session__: true, id: session_id, ...headerRest },
     ...snapshot.events.map((event) => ({
       seq: event.seq,
       id: event.id,

@@ -8,6 +8,12 @@
   fixture suite instead of the initial two-fixture smoke subset.
 - Added `expected-projections.jsonl` assertions to the conformance runner for
   subagent delegation fixtures.
+- Moved subagent delegation projections into exported helpers and made the
+  conformance runner compute expected projections from loaded Session Logs.
+- Added the cross-language Session JSONL round-trip matrix for TypeScript,
+  Go, Ruby, and Python writers/readers.
+- Fixed Anthropic projection after cross-language load so assistant messages
+  with reasoning preserve both thinking blocks and the assistant text block.
 - Exported the Gemini projection and ingestor from the public package surface.
 - Hardened text fixture handling and CI fixture checkout against Windows CRLF
   conversion.

@@ -9,9 +9,11 @@ import { buildRuntime } from "../runtime/build.js";
 import { projectOpenAIRequest } from "../projections/provider/openai.js";
 import { projectAnthropicRequest } from "../projections/provider/anthropic.js";
 import { projectGeminiRequest } from "../projections/provider/gemini.js";
+import { delegationTree, descendantTimeline, descendantUsage, openChildren } from "../projections/delegation.js";
 import { ingestOpenAIResponseEvents } from "../ingestors/openai.js";
 import { ingestAnthropicResponseEvents } from "../ingestors/anthropic.js";
 import { ingestGeminiResponseEvents } from "../ingestors/gemini.js";
+import { Session } from "../core/session.js";
 import type { ProviderManifest } from "../projections/provider/common.js";
 import type { EventPayload, SerializableLogEvent } from "../core/events.js";
 
@@ -37,6 +39,12 @@ export interface ConformanceReport {
   readonly results: readonly FixtureResult[];
 }
 
+export interface ScriptedSessionOptions {
+  readonly fixturePath: string;
+  readonly initialSession?: Session;
+  readonly streaming?: boolean;
+}
+
 interface FixtureFiles {
   readonly manifest: ProviderManifest;
   readonly inputs: readonly unknown[];
@@ -45,27 +53,13 @@ interface FixtureFiles {
   readonly expectedLog: readonly SerializableLogEvent[];
   readonly expectedProjections?: readonly ProjectionExpectation[];
   readonly staticLog?: readonly SerializableLogEvent[];
-  readonly staticSessions?: ReadonlyMap<string, SessionFixture>;
+  readonly staticSessions?: ReadonlyMap<string, Session>;
 }
 
 interface ProjectionExpectation {
   readonly projection: string;
   readonly input: string;
   readonly output: unknown;
-}
-
-interface SessionFixture {
-  readonly id: string;
-  readonly header: Record<string, unknown>;
-  readonly events: readonly SessionFixtureEvent[];
-}
-
-interface SessionFixtureEvent {
-  readonly seq: number;
-  readonly id: string;
-  readonly type: string;
-  readonly payload: Record<string, unknown>;
-  readonly timestamp?: string;
 }
 
 export async function runFixture(fixturePath: string): Promise<FixtureResult> {
@@ -83,109 +77,8 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
       assertExpectedProjections(files);
       return { name, passed: true };
     }
-    const runtime = buildRuntime({ manifest });
-    const log = new Log();
-    let scriptIndex = 0;
-
-    for (const input of files.inputs) {
-      const shouldCallProvider = appendInput(log, input);
-      if (!shouldCallProvider) {
-        continue;
-      }
-      while (true) {
-        if (hasStrictOpenAIDocumentMismatch(runtime.manifest, log)) {
-          log.append("runtime_error", {
-            source: "projection",
-            handler: "openai",
-            error_class: "CapabilityMismatchError",
-            message: `${runtime.manifest.provider.kind}/${runtime.manifest.provider.model} does not support document content blocks`,
-            reason: "capability_mismatch",
-            terminal: true,
-          });
-          break;
-        }
-        if (hasImmediateTimeout(runtime.manifest, log)) {
-          log.append("runtime_error", {
-            source: "strategy",
-            handler: "guard/timeout",
-            error_class: "Harnas::TimeoutGuard",
-            message: "timeout",
-            reason: "timeout",
-            terminal: true,
-          });
-          break;
-        }
-
-        const request = projectRequest(runtime.manifest, log, fixturePath);
-        if (hasFailingPostProjectionHook(runtime.manifest)) {
-          log.append("runtime_error", {
-            source: "hook",
-            handler: "conformance.raise_hook",
-            error_class: "RuntimeError",
-            message: "conformance hook failure",
-            terminal: true,
-          });
-          break;
-        }
-
-        const scriptTurn = files.script[scriptIndex];
-        if (scriptTurn === undefined) {
-          throw new ConformanceError(`provider script ended before turn ${scriptIndex + 1}`);
-        }
-
-        const recordTurn = isRecord(scriptTurn) ? scriptTurn : undefined;
-        if (recordTurn?.expect_request !== undefined && canonicalJson(request) !== canonicalJson(recordTurn.expect_request)) {
-          throw new ConformanceError(
-            `request mismatch\nactual:   ${canonicalJson(request)}\nexpected: ${canonicalJson(recordTurn.expect_request)}`,
-          );
-        }
-
-        const response = recordTurn !== undefined && "response" in recordTurn ? recordTurn.response : scriptTurn;
-        if (isProviderErrorResponse(response)) {
-          log.append("provider_error", providerErrorPayload(response.error, scriptIndex + 1));
-          scriptIndex += 1;
-          if (response.error.status === 503) {
-            continue;
-          }
-          break;
-        }
-
-        if (files.streaming) {
-          await appendStreamEvents(log, response, runtime.manifest, fixturePath);
-          scriptIndex += 1;
-          const last = log.events().at(-1);
-          if (last?.event_type !== "tool_result") {
-            break;
-          }
-          continue;
-        }
-
-        const events = ingestResponse(runtime.manifest, response);
-        let sawToolUse = false;
-        let stopReason: unknown;
-        for (const event of events) {
-          if (event.type === "assistant_message") {
-            maybeAppendMarkerTailCompaction(log, runtime.manifest);
-          }
-          const appended = log.append(event.type, event.payload);
-          if (appended.event_type === "assistant_message") {
-            stopReason = appended.payload.stop_reason;
-          } else if (appended.event_type === "tool_use") {
-            sawToolUse = true;
-            await appendToolResult(log, appended.payload, runtime.manifest, fixturePath);
-            maybeAppendGuardRuntimeError(log, runtime.manifest, appended.payload.name);
-            if (log.events().at(-1)?.event_type === "runtime_error") {
-              stopReason = "runtime_error";
-              break;
-            }
-          }
-        }
-        scriptIndex += 1;
-        if (stopReason === "runtime_error" || (!sawToolUse && stopReason !== "tool_use")) {
-          break;
-        }
-      }
-    }
+    const session = await runScriptedSession(manifest, files.script, files.inputs, { fixturePath, streaming: files.streaming });
+    const log = session.log;
 
     const actual = normalizeActualLogForExpected(log.serializableEvents(), files.expectedLog);
     if (canonicalJson(actual) !== canonicalJson(files.expectedLog)) {
@@ -198,6 +91,120 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
   } catch (error) {
     return { name, passed: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export async function runScriptedSession(
+  manifest: ProviderManifest,
+  script: readonly unknown[],
+  inputs: readonly unknown[],
+  options: ScriptedSessionOptions,
+): Promise<Session> {
+  const runtime = buildRuntime({ manifest });
+  const session = options.initialSession ?? new Session();
+  const log = session.log;
+  let scriptIndex = 0;
+
+  for (const input of inputs) {
+    const shouldCallProvider = appendInput(log, input);
+    if (!shouldCallProvider) {
+      continue;
+    }
+    while (true) {
+      if (hasStrictOpenAIDocumentMismatch(runtime.manifest, log)) {
+        log.append("runtime_error", {
+          source: "projection",
+          handler: "openai",
+          error_class: "CapabilityMismatchError",
+          message: `${runtime.manifest.provider.kind}/${runtime.manifest.provider.model} does not support document content blocks`,
+          reason: "capability_mismatch",
+          terminal: true,
+        });
+        break;
+      }
+      if (hasImmediateTimeout(runtime.manifest, log)) {
+        log.append("runtime_error", {
+          source: "strategy",
+          handler: "guard/timeout",
+          error_class: "Harnas::TimeoutGuard",
+          message: "timeout",
+          reason: "timeout",
+          terminal: true,
+        });
+        break;
+      }
+
+      const request = projectRequest(runtime.manifest, log, options.fixturePath);
+      if (hasFailingPostProjectionHook(runtime.manifest)) {
+        log.append("runtime_error", {
+          source: "hook",
+          handler: "conformance.raise_hook",
+          error_class: "RuntimeError",
+          message: "conformance hook failure",
+          terminal: true,
+        });
+        break;
+      }
+
+      const scriptTurn = script[scriptIndex];
+      if (scriptTurn === undefined) {
+        throw new ConformanceError(`provider script ended before turn ${scriptIndex + 1}`);
+      }
+
+      const recordTurn = isRecord(scriptTurn) ? scriptTurn : undefined;
+      if (recordTurn?.expect_request !== undefined && canonicalJson(request) !== canonicalJson(recordTurn.expect_request)) {
+        throw new ConformanceError(
+          `request mismatch\nactual:   ${canonicalJson(request)}\nexpected: ${canonicalJson(recordTurn.expect_request)}`,
+        );
+      }
+
+      const response = recordTurn !== undefined && "response" in recordTurn ? recordTurn.response : scriptTurn;
+      if (isProviderErrorResponse(response)) {
+        log.append("provider_error", providerErrorPayload(response.error, scriptIndex + 1));
+        scriptIndex += 1;
+        if (response.error.status === 503) {
+          continue;
+        }
+        break;
+      }
+
+      if (options.streaming === true) {
+        await appendStreamEvents(log, response, runtime.manifest, options.fixturePath);
+        scriptIndex += 1;
+        const last = log.events().at(-1);
+        if (last?.event_type !== "tool_result") {
+          break;
+        }
+        continue;
+      }
+
+      const events = ingestResponse(runtime.manifest, response);
+      let sawToolUse = false;
+      let stopReason: unknown;
+      for (const event of events) {
+        if (event.type === "assistant_message") {
+          maybeAppendMarkerTailCompaction(log, runtime.manifest);
+        }
+        const appended = log.append(event.type, event.payload);
+        if (appended.event_type === "assistant_message") {
+          stopReason = appended.payload.stop_reason;
+        } else if (appended.event_type === "tool_use") {
+          sawToolUse = true;
+          await appendToolResult(log, appended.payload, runtime.manifest, options.fixturePath);
+          maybeAppendGuardRuntimeError(log, runtime.manifest, appended.payload.name);
+          if (log.events().at(-1)?.event_type === "runtime_error") {
+            stopReason = "runtime_error";
+            break;
+          }
+        }
+      }
+      scriptIndex += 1;
+      if (stopReason === "runtime_error" || (!sawToolUse && stopReason !== "tool_use")) {
+        break;
+      }
+    }
+  }
+
+  return session;
 }
 
 function sanitizeManifest(manifest: ProviderManifest): ProviderManifest {
@@ -321,49 +328,24 @@ async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
   };
 }
 
-async function readSessionFixtures(path: string): Promise<ReadonlyMap<string, SessionFixture>> {
-  const sessions = new Map<string, SessionFixture>();
+async function readSessionFixtures(path: string): Promise<ReadonlyMap<string, Session>> {
+  const sessions = new Map<string, Session>();
   for (const entry of await readdir(path, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
       continue;
     }
-    const session = await readSessionFile(join(path, entry.name));
-    sessions.set(session.id, session);
+    const session = Session.fromJsonl(await readText(join(path, entry.name)));
+    sessions.set(session.header.session_id, session);
   }
   return sessions;
 }
 
-async function readSessionFile(path: string): Promise<SessionFixture> {
-  const lines = (await readText(path)).split(/\r?\n/).filter((line) => line.trim().length > 0);
-  let header: Record<string, unknown> | undefined;
-  const events: SessionFixtureEvent[] = [];
-  for (const line of lines) {
-    const parsed = JSON.parse(line) as Record<string, unknown>;
-    if (parsed.__session__ === true) {
-      header = parsed;
-      continue;
-    }
-    events.push({
-      seq: parsed.seq as number,
-      id: String(parsed.id ?? ""),
-      type: String(parsed.type),
-      payload: isRecord(parsed.payload) ? parsed.payload : {},
-      ...(typeof parsed.timestamp === "string" ? { timestamp: parsed.timestamp } : {}),
-    });
-  }
-  if (header === undefined || typeof header.id !== "string") {
-    throw new ConformanceError(`session fixture ${path} is missing a session header`);
-  }
-  return { id: header.id, header, events };
+async function readSessionFile(path: string): Promise<Session> {
+  return Session.fromJsonl(await readText(path));
 }
 
-function sessionLogFromFile(session: SessionFixture): readonly SerializableLogEvent[] {
-  return session.events.map((event) => ({
-    seq: event.seq,
-    type: event.type as SerializableLogEvent["type"],
-    payload: event.payload as SerializableLogEvent["payload"],
-    ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
-  }));
+function sessionLogFromFile(session: Session): readonly SerializableLogEvent[] {
+  return session.log.serializableEvents();
 }
 
 function assertExpectedProjections(files: FixtureFiles): void {
@@ -376,7 +358,7 @@ function assertExpectedProjections(files: FixtureFiles): void {
   const actual = files.expectedProjections.map((expectation) => ({
     projection: expectation.projection,
     input: expectation.input,
-    output: projectSessionFixture(files.staticSessions as ReadonlyMap<string, SessionFixture>, expectation.projection, expectation.input),
+    output: projectSessionFixture(files.staticSessions as ReadonlyMap<string, Session>, expectation.projection, expectation.input),
   }));
   if (canonicalJson(actual) !== canonicalJson(files.expectedProjections)) {
     throw new ConformanceError(
@@ -386,143 +368,22 @@ function assertExpectedProjections(files: FixtureFiles): void {
 }
 
 function projectSessionFixture(
-  sessions: ReadonlyMap<string, SessionFixture>,
+  sessions: ReadonlyMap<string, Session>,
   projection: string,
   input: string,
 ): unknown {
   switch (projection) {
     case "delegation_tree":
-      return delegationTree(sessions, input);
+      return delegationTree(input, sessions);
     case "open_children":
-      return openChildren(sessions, input);
+      return openChildren(input, sessions);
     case "descendant_usage":
-      return descendantUsage(sessions, input);
+      return descendantUsage(input, sessions);
     case "descendant_timeline":
-      return descendantTimeline(sessions, input);
+      return descendantTimeline(input, sessions);
     default:
       throw new ConformanceError(`unsupported projection fixture: ${projection}`);
   }
-}
-
-function delegationTree(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): Record<string, unknown> {
-  const session = requireSession(sessions, sessionId);
-  return {
-    session_id: sessionId,
-    children: session.events
-      .filter((event) => event.type === "agent_spawn")
-      .map((event) => delegationTreeChild(sessions, event.payload)),
-  };
-}
-
-function delegationTreeChild(sessions: ReadonlyMap<string, SessionFixture>, spawn: Record<string, unknown>): Record<string, unknown> {
-  const spawnId = String(spawn.spawn_id ?? "");
-  const childSessionId = String(spawn.child_session_id ?? "");
-  const result = findAgentResult(sessions, spawnId);
-  const resultPayload = result?.payload;
-  return {
-    spawn_id: spawnId,
-    child_session_id: childSessionId,
-    task: String(spawn.task ?? ""),
-    join_policy: String(spawn.join_policy ?? "async"),
-    metadata: isRecord(spawn.metadata) ? spawn.metadata : {},
-    status: String(resultPayload?.status ?? "open"),
-    result: resultPayload?.result ?? null,
-    error: resultPayload?.error ?? null,
-    children: delegationTree(sessions, childSessionId).children,
-  };
-}
-
-function openChildren(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): readonly string[] {
-  const session = requireSession(sessions, sessionId);
-  const completed = new Set(
-    session.events
-      .filter((event) => event.type === "agent_result")
-      .map((event) => String(event.payload.spawn_id ?? "")),
-  );
-  return session.events
-    .filter((event) => event.type === "agent_spawn")
-    .map((event) => String(event.payload.spawn_id ?? ""))
-    .filter((spawnId) => !completed.has(spawnId));
-}
-
-function descendantUsage(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): Record<string, number> {
-  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  for (const id of descendantSessionIds(sessions, sessionId)) {
-    for (const event of requireSession(sessions, id).events) {
-      if (!isRecord(event.payload.usage)) {
-        continue;
-      }
-      usage.prompt_tokens += numericUsage(event.payload.usage, "prompt_tokens", "input_tokens");
-      usage.completion_tokens += numericUsage(event.payload.usage, "completion_tokens", "output_tokens");
-      usage.total_tokens += numericUsage(event.payload.usage, "total_tokens");
-    }
-  }
-  return usage;
-}
-
-function descendantTimeline(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): readonly Record<string, unknown>[] {
-  const rows: Record<string, unknown>[] = [];
-  for (const id of descendantSessionIds(sessions, sessionId)) {
-    for (const event of requireSession(sessions, id).events) {
-      const timestamp = typeof event.payload.timestamp === "string" ? event.payload.timestamp : event.timestamp ?? "";
-      rows.push({
-        session_id: id,
-        seq: event.seq,
-        id: event.id,
-        type: event.type,
-        payload: event.payload,
-        timestamp,
-      });
-    }
-  }
-  return rows.sort((left, right) => {
-    const byTimestamp = String(left.timestamp).localeCompare(String(right.timestamp));
-    if (byTimestamp !== 0) {
-      return byTimestamp;
-    }
-    const bySession = String(left.session_id).localeCompare(String(right.session_id));
-    if (bySession !== 0) {
-      return bySession;
-    }
-    return Number(left.seq) - Number(right.seq);
-  });
-}
-
-function descendantSessionIds(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): readonly string[] {
-  const ids: string[] = [];
-  const visit = (id: string): void => {
-    ids.push(id);
-    for (const event of requireSession(sessions, id).events) {
-      if (event.type === "agent_spawn" && typeof event.payload.child_session_id === "string") {
-        visit(event.payload.child_session_id);
-      }
-    }
-  };
-  visit(sessionId);
-  return ids;
-}
-
-function findAgentResult(sessions: ReadonlyMap<string, SessionFixture>, spawnId: string): SessionFixtureEvent | undefined {
-  for (const session of sessions.values()) {
-    const found = session.events.find((event) => event.type === "agent_result" && event.payload.spawn_id === spawnId);
-    if (found !== undefined) {
-      return found;
-    }
-  }
-  return undefined;
-}
-
-function numericUsage(usage: Record<string, unknown>, primary: string, fallback?: string): number {
-  const value = usage[primary] ?? (fallback === undefined ? undefined : usage[fallback]);
-  return typeof value === "number" ? value : 0;
-}
-
-function requireSession(sessions: ReadonlyMap<string, SessionFixture>, sessionId: string): SessionFixture {
-  const session = sessions.get(sessionId);
-  if (session === undefined) {
-    throw new ConformanceError(`projection references missing session ${sessionId}`);
-  }
-  return session;
 }
 
 async function exists(path: string): Promise<boolean> {
