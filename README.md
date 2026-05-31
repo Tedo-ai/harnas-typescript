@@ -61,14 +61,14 @@ const newEvents = await session.eventsSince(0);
 
 ## Status
 
-- v0.19.2 fixture runner: 69/69 fixtures locally, including
+- v0.19.3 fixture runner: 70/70 fixtures locally, including
   `expected-projections.jsonl` assertions computed through the exported
   delegation projection helpers
 - Cross-language Session JSONL round-trip matrix is wired for TypeScript,
   Go, Ruby, and Python writers/readers
 - Persistence is behind `StorageAdapter`; file-backed JSONL remains the
   default, and database adapters can supply the same three-operation seam.
-- CI runs the v0.19.2 fixture suite on Node 20/22 across Linux, macOS, and
+- CI runs the v0.19.3 fixture suite on Node 20/22 across Linux, macOS, and
   Windows, plus Bun and Deno smoke runtimes
 - v1.0.0 still requires release review
 - Future contrib layout reserved with the `@tedo-ai/harnas-typescript/mcp`

@@ -7,6 +7,10 @@
 - Updated the conformance target to fixtures v0.19.2: 69/69, including
   the Anthropic text-plus-reasoning projection guard and text-plus-tool
   projection guards for Anthropic, OpenAI, and Gemini.
+- Updated the conformance target to fixtures v0.19.3: 70/70, including
+  the process-isolation repeat fixture that runs independent Sessions in
+  one host process.
+- Conformance runner now honors `isolation.json` repeat checks.
 - Fixed OpenAI projection so assistant messages with tool calls preserve
   non-empty assistant text in later requests.
 - Fixed Gemini projection so prior tool calls and tool results project back as

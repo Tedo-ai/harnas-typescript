@@ -54,6 +54,9 @@ interface FixtureFiles {
   readonly expectedProjections?: readonly ProjectionExpectation[];
   readonly staticLog?: readonly SerializableLogEvent[];
   readonly staticSessions?: ReadonlyMap<string, Session>;
+  readonly isolation?: {
+    readonly repeat?: number;
+  };
 }
 
 interface ProjectionExpectation {
@@ -85,6 +88,16 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
       throw new ConformanceError(
         `log mismatch\nactual:   ${canonicalJson(actual)}\nexpected: ${canonicalJson(files.expectedLog)}`,
       );
+    }
+    const repeat = files.isolation?.repeat ?? 1;
+    for (let index = 1; index < repeat; index += 1) {
+      const repeatedSession = await runScriptedSession(manifest, files.script, files.inputs, { fixturePath, streaming: files.streaming });
+      const repeated = normalizeActualLogForExpected(repeatedSession.log.serializableEvents(), files.expectedLog);
+      if (canonicalJson(repeated) !== canonicalJson(files.expectedLog)) {
+        throw new ConformanceError(
+          `isolation repeat ${index + 1} log mismatch\nactual:   ${canonicalJson(repeated)}\nexpected: ${canonicalJson(files.expectedLog)}`,
+        );
+      }
     }
 
     return { name, passed: true };
@@ -307,6 +320,7 @@ async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
   const inputsPath = join(fixturePath, "inputs.json");
   const hasInputs = await exists(inputsPath);
   const projectionsPath = join(fixturePath, "expected-projections.jsonl");
+  const isolationPath = join(fixturePath, "isolation.json");
   const sessionsPath = join(fixturePath, "sessions");
   const expectedProjections = await exists(projectionsPath)
     ? await readJsonlFile<ProjectionExpectation>(projectionsPath)
@@ -322,6 +336,7 @@ async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
       : await (exists(providerScriptPath).then((ok) => ok ? readJsonFile<readonly ProviderScriptTurn[]>(providerScriptPath) : Promise.resolve([]))),
     streaming,
     expectedLog: await readJsonlFile<SerializableLogEvent>(join(fixturePath, "expected-log.jsonl")),
+    ...((await exists(isolationPath)) ? { isolation: await readJsonFile<{ readonly repeat?: number }>(isolationPath) } : {}),
     ...(expectedProjections === undefined ? {} : { expectedProjections }),
     ...(staticSessions === undefined ? {} : { staticSessions }),
     ...(hasInputs ? {} : { staticLog: sessionLogFromFile(await readSessionFile(join(sessionsPath, "parent.jsonl"))) }),
