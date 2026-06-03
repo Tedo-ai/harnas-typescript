@@ -12,6 +12,10 @@ export function eventIdForSeq(seq: number): EventId {
   return brand<"EventId">(`evt_${String(seq).padStart(6, "0")}`);
 }
 
+export function newEventId(): EventId {
+  return brand<"EventId">(`evt_${globalThis.crypto.randomUUID().replaceAll("-", "")}`);
+}
+
 export function newSessionId(): SessionId {
   return brand<"SessionId">(`ses_${globalThis.crypto.randomUUID().replaceAll("-", "")}`);
 }

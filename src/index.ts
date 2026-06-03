@@ -4,6 +4,7 @@ export type {
   AgentStatusEvent,
   AssistantMessageEvent,
   ContentBlock,
+  EventDraft,
   LogEvent,
   MessagePayload,
   SerializableLogEvent,
@@ -14,9 +15,9 @@ export type {
 } from "./core/events.js";
 export { messageText, normalizeMessagePayload } from "./core/events.js";
 export type { Brand, EventId, SessionId, ToolCallId } from "./core/ids.js";
-export { brand, eventIdForSeq, newSessionId } from "./core/ids.js";
+export { brand, eventIdForSeq, newEventId, newSessionId } from "./core/ids.js";
 export { Log, appendUserMessage } from "./core/log.js";
-export { createLogEvent } from "./core/log.js";
+export { createLogEvent, createLogEventDraft, createLogEventFromDraft } from "./core/log.js";
 export { Session } from "./core/session.js";
 export type { SessionOpenOptions } from "./core/session.js";
 export type { SessionSnapshot, StorageAdapter } from "./storage/storage-adapter.js";

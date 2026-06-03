@@ -32,6 +32,11 @@
   conversion.
 - Added the `StorageAdapter` persistence seam with file-backed and in-memory
   adapters before the v1.0 API freeze.
+- Aligned the storage seam with the v0.19.4 `EventDraft` → `EventRow`
+  contract: the Session/runtime now mints event id and timestamp while
+  adapters assign durable `seq`.
+- Enforced dense Event `seq` validation when parsing Session JSONL so
+  duplicate, gapped, or reordered rows fail loudly.
 
 ## [0.2.0] — 2026-05-24
 

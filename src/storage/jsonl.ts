@@ -11,7 +11,7 @@ export function parseSessionJsonl(text: string): SessionSnapshot {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
   const headerRow = rows.shift();
   const header = parseHeader(headerRow);
-  const events = rows.map((row) => parseEventRow(row));
+  const events = rows.map((row, index) => parseEventRow(row, index));
   return { header, events };
 }
 
@@ -43,8 +43,11 @@ function parseHeader(row: Record<string, unknown> | undefined): SessionHeader {
   throw new Error("session JSONL header row must contain a session object");
 }
 
-function parseEventRow(row: Record<string, unknown>): LogEvent {
+function parseEventRow(row: Record<string, unknown>, index: number): LogEvent {
   const seq = Number(row.seq);
+  if (seq !== index) {
+    throw new Error(`invalid event seq at row ${index}: got ${String(row.seq)}, want ${index}`);
+  }
   const eventType = String(row.event_type ?? row.type) as EventType;
   const payload = normalizePayload(eventType, row.payload) as EventPayload<EventType>;
   return {

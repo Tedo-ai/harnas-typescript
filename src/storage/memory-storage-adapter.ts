@@ -1,6 +1,6 @@
-import type { EventPayload, EventType, LogEvent, SessionHeader } from "../core/events.js";
+import type { EventDraft, EventType, LogEvent, SessionHeader } from "../core/events.js";
 import { newSessionId } from "../core/ids.js";
-import { createLogEvent } from "../core/log.js";
+import { createLogEventFromDraft } from "../core/log.js";
 import type { HeaderWritableStorageAdapter, SessionSnapshot } from "./storage-adapter.js";
 
 export class MemoryStorageAdapter implements HeaderWritableStorageAdapter {
@@ -17,10 +17,9 @@ export class MemoryStorageAdapter implements HeaderWritableStorageAdapter {
   }
 
   async appendEvent<TType extends EventType>(
-    eventType: TType,
-    payload: EventPayload<TType>,
+    draft: EventDraft<TType>,
   ): Promise<Extract<LogEvent, { event_type: TType }>> {
-    const event = createLogEvent(this.#events.length, eventType, payload);
+    const event = createLogEventFromDraft(this.#events.length, draft);
     this.#events.push(event);
     return event;
   }

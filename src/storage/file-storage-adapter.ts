@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { EventPayload, EventType, LogEvent, SessionHeader } from "../core/events.js";
+import type { EventDraft, EventType, LogEvent, SessionHeader } from "../core/events.js";
 import { newSessionId } from "../core/ids.js";
-import { createLogEvent } from "../core/log.js";
+import { createLogEventFromDraft } from "../core/log.js";
 import { parseSessionJsonl, sessionJsonl } from "./jsonl.js";
 import type { HeaderWritableStorageAdapter, SessionSnapshot } from "./storage-adapter.js";
 
@@ -29,11 +29,10 @@ export class FileStorageAdapter implements HeaderWritableStorageAdapter {
   }
 
   async appendEvent<TType extends EventType>(
-    eventType: TType,
-    payload: EventPayload<TType>,
+    draft: EventDraft<TType>,
   ): Promise<Extract<LogEvent, { event_type: TType }>> {
     const snapshot = await this.loadSession();
-    const event = createLogEvent(snapshot.events.length, eventType, payload);
+    const event = createLogEventFromDraft(snapshot.events.length, draft);
     await this.#write({ header: snapshot.header, events: [...snapshot.events, event] });
     return event;
   }

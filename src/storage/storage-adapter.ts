@@ -1,4 +1,4 @@
-import type { EventPayload, EventType, LogEvent, SessionHeader } from "../core/events.js";
+import type { EventDraft, EventType, LogEvent, SessionHeader } from "../core/events.js";
 
 export interface SessionSnapshot {
   readonly header: SessionHeader;
@@ -8,8 +8,7 @@ export interface SessionSnapshot {
 export interface StorageAdapter {
   loadSession(): Promise<SessionSnapshot>;
   appendEvent<TType extends EventType>(
-    eventType: TType,
-    payload: EventPayload<TType>,
+    draft: EventDraft<TType>,
   ): Promise<Extract<LogEvent, { event_type: TType }>>;
   eventsSince(cursor: number): Promise<readonly LogEvent[]>;
 }

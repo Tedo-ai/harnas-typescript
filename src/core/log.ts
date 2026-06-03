@@ -1,6 +1,6 @@
-import { eventIdForSeq } from "./ids.js";
+import { newEventId } from "./ids.js";
 import type { EventId } from "./ids.js";
-import type { EventPayload, EventType, LogEvent, SerializableLogEvent } from "./events.js";
+import type { EventDraft, EventPayload, EventType, LogEvent, SerializableLogEvent } from "./events.js";
 import { normalizeMessagePayload } from "./events.js";
 
 export class Log {
@@ -11,7 +11,7 @@ export class Log {
   }
 
   append<TType extends EventType>(eventType: TType, payload: EventPayload<TType>): Extract<LogEvent, { event_type: TType }> {
-    const event = createLogEvent(this.#events.length, eventType, payload);
+    const event = createLogEventFromDraft(this.#events.length, createLogEventDraft(eventType, payload));
     this.#events.push(event);
     return event;
   }
@@ -48,16 +48,36 @@ export function createLogEvent<TType extends EventType>(
   payload: EventPayload<TType>,
   options: { readonly id?: EventId; readonly timestamp?: string } = {},
 ): Extract<LogEvent, { event_type: TType }> {
+  return createLogEventFromDraft(seq, createLogEventDraft(eventType, payload, options));
+}
+
+export function createLogEventDraft<TType extends EventType>(
+  eventType: TType,
+  payload: EventPayload<TType>,
+  options: { readonly id?: EventId; readonly timestamp?: string } = {},
+): EventDraft<TType> {
   const normalizedPayload =
     eventType === "user_message" || eventType === "assistant_message"
       ? normalizeMessagePayload(payload)
       : payload;
   return {
-    seq,
-    id: options.id ?? eventIdForSeq(seq),
+    id: options.id ?? newEventId(),
     timestamp: options.timestamp ?? new Date().toISOString(),
-    event_type: eventType,
-    payload: normalizedPayload,
+    type: eventType,
+    payload: normalizedPayload as EventPayload<TType>,
+  };
+}
+
+export function createLogEventFromDraft<TType extends EventType>(
+  seq: number,
+  draft: EventDraft<TType>,
+): Extract<LogEvent, { event_type: TType }> {
+  return {
+    seq,
+    id: draft.id,
+    timestamp: draft.timestamp,
+    event_type: draft.type,
+    payload: draft.payload,
   } as Extract<LogEvent, { event_type: TType }>;
 }
 

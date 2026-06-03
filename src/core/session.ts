@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { EventPayload, EventType, LogEvent, SessionHeader } from "./events.js";
 import { newSessionId } from "./ids.js";
-import { Log } from "./log.js";
+import { createLogEventDraft, Log } from "./log.js";
 import { FileStorageAdapter } from "../storage/file-storage-adapter.js";
 import { canSaveHeader } from "../storage/storage-adapter.js";
 import type { StorageAdapter } from "../storage/storage-adapter.js";
@@ -37,7 +37,7 @@ export class Session {
     if (this.storage === undefined) {
       return this.log.append(eventType, payload);
     }
-    const event = await this.storage.appendEvent(eventType, payload);
+    const event = await this.storage.appendEvent(createLogEventDraft(eventType, payload));
     this.log.appendExisting(event);
     return event;
   }

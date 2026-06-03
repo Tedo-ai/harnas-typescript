@@ -189,6 +189,13 @@ export type EventType = LogEvent["event_type"];
 
 export type EventPayload<TType extends EventType> = Extract<LogEvent, { event_type: TType }>["payload"];
 
+export interface EventDraft<TType extends EventType = EventType> {
+  readonly id: EventId;
+  readonly timestamp: string;
+  readonly type: TType;
+  readonly payload: EventPayload<TType>;
+}
+
 export interface SerializableLogEvent<TType extends EventType = EventType> {
   readonly seq: number;
   readonly timestamp?: string;
