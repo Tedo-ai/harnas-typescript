@@ -71,7 +71,7 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
     const files = await loadFixture(fixturePath);
     const manifest = sanitizeManifest(files.manifest);
     if (files.staticLog !== undefined) {
-      const actual = normalizeActualLogForExpected(files.staticLog, files.expectedLog);
+    const actual = normalizeActualLogForExpected(files.staticLog, files.expectedLog);
       if (canonicalJson(actual) !== canonicalJson(files.expectedLog)) {
         throw new ConformanceError(
           `log mismatch\nactual:   ${canonicalJson(actual)}\nexpected: ${canonicalJson(files.expectedLog)}`,
@@ -226,6 +226,16 @@ function sanitizeManifest(manifest: ProviderManifest): ProviderManifest {
   return copy as unknown as ProviderManifest;
 }
 
+export function firstLogMismatch(
+  actual: readonly SerializableLogEvent[],
+  expected: readonly SerializableLogEvent[],
+): string | undefined {
+  const normalized = normalizeActualLogForExpected(actual, expected);
+  return canonicalJson(normalized) === canonicalJson(expected)
+    ? undefined
+    : `actual:   ${canonicalJson(normalized)}\nexpected: ${canonicalJson(expected)}`;
+}
+
 function normalizeActualLogForExpected(
   actual: readonly SerializableLogEvent[],
   expected: readonly SerializableLogEvent[],
@@ -265,24 +275,9 @@ function normalizeActualPayloadForExpected(actual: unknown, expected: unknown): 
     return actual;
   }
 
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = { ...actual };
   for (const key of Object.keys(expected)) {
-    if (key === "usage" && isRecord(actual[key]) && isRecord(expected[key])) {
-      out[key] = normalizeActualUsageForExpected(actual[key], expected[key]);
-    } else {
-      out[key] = normalizeActualPayloadForExpected(actual[key], expected[key]);
-    }
-  }
-  return out;
-}
-
-function normalizeActualUsageForExpected(
-  actual: Record<string, unknown>,
-  expected: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(expected)) {
-    out[key] = actual[key];
+    out[key] = normalizeActualPayloadForExpected(actual[key], expected[key]);
   }
   return out;
 }

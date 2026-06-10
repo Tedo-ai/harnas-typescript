@@ -115,7 +115,7 @@ function projectExpectedPayload(actual: unknown, expected: unknown): unknown {
   if (!isRecord(actual) || !isRecord(expected)) {
     return actual;
   }
-  const projected: Record<string, unknown> = {};
+  const projected: Record<string, unknown> = { ...actual };
   for (const key of Object.keys(expected)) {
     projected[key] = projectExpectedPayload(actual[key], expected[key]);
   }
