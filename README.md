@@ -62,10 +62,12 @@ const newEvents = await session.eventsSince(0);
 
 ## Status
 
-- Current runtime conformance: 71/71 fixtures locally against the current spec
-  checkout. The runner is strict and routes scripted provider turns through
-  the real `AgentLoop`, `ToolRegistry`, projections, ingestors, guards,
-  compaction, hooks, and built-ins.
+- Current runtime conformance: 71/71 fixtures locally against the current
+  spec checkout, with disclosed implementation gaps. The runner is strict,
+  but three fixture-aware implementation shims still need to be replaced by
+  real MarkerTail tool-pair-safe compaction, manifest hook dispatch, and
+  `Session.fork(at_seq)` behavior before the implementation can claim full
+  conformance.
 - Fixture-only stubs remain only at explicit conformance boundaries:
   scripted providers, conformance-only test tools, and no-network `fetch_url`
   responses.

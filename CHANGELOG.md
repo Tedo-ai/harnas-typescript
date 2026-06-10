@@ -52,6 +52,8 @@
   and validated against the expanded 71-fixture spec set.
 - Added a README drift check that compares public spec-target and
   fixture-count claims with the checked-out spec.
+- Pinned the README conformance claim to disclose the open MarkerTail,
+  manifest hook, and fork implementation gaps before v1.0.0.
 
 ## [0.2.0] — 2026-05-24
 

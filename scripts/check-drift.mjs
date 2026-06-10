@@ -50,6 +50,10 @@ const readme = readFileSync(join(root, "README.md"), "utf8");
 for (const needle of [
   `Harnas spec ${specVersion}`,
   `${count}/${count} fixtures`,
+  "with disclosed implementation gaps",
+  "real MarkerTail tool-pair-safe compaction",
+  "manifest hook dispatch",
+  "Session.fork(at_seq)",
   "Cross-language Session JSONL round-trip matrix",
 ]) {
   if (!readme.includes(needle)) fail(`README does not contain ${JSON.stringify(needle)}`);
