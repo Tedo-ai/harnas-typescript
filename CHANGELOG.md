@@ -37,6 +37,8 @@
   adapters assign durable `seq`.
 - Enforced dense Event `seq` validation when parsing Session JSONL so
   duplicate, gapped, or reordered rows fail loudly.
+- Added conformance replay support for malformed streaming provider frames
+  and validated against the expanded 71-fixture spec set.
 
 ## [0.2.0] — 2026-05-24
 

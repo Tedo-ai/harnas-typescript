@@ -636,6 +636,10 @@ async function appendStreamEvents(log: Log, response: unknown, manifest: Provide
       log.append("provider_error", providerErrorPayload(item.error, 1));
       return;
     }
+    if (isRecord(item) && isRecord(item.malformed_frame)) {
+      log.append("provider_error", providerErrorPayload(item.malformed_frame, 1));
+      return;
+    }
     if (!isRecord(item) || typeof item.type !== "string" || !isRecord(item.payload)) {
       continue;
     }
@@ -653,13 +657,14 @@ function isProviderErrorResponse(response: unknown): response is { readonly erro
 }
 
 function providerErrorPayload(error: Record<string, unknown>, attempt: number): Record<string, unknown> {
-  const status = typeof error.status === "number" ? error.status : 500;
+  const status = typeof error.status === "number" ? error.status : null;
   const body = typeof error.body === "string" ? error.body : `HTTP ${status}`;
-  const message = typeof error.message === "string" ? error.message : `HTTP ${status}: ${body}`;
+  const malformed = status === null;
+  const message = typeof error.message === "string" ? error.message : malformed ? String(body) : `HTTP ${status}: ${body}`;
   return {
     provider: "unknown",
     status,
-    error_class: "Harnas::Providers::HTTPError",
+    error_class: malformed ? "Harnas::Providers::Error" : "Harnas::Providers::HTTPError",
     message,
     attempt,
     terminal: status !== 503,
