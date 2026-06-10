@@ -4,6 +4,17 @@
 
 ### Changed
 
+- Reset the conformance runner to the strict runtime path: scripted provider
+  turns now execute through `AgentLoop`, `ToolRegistry`, provider projections,
+  ingestors, guards, hooks, compaction, streaming handling, and built-ins
+  instead of runner-side fixture accommodation.
+- Added real runtime/library coverage for write/read/load-skill tools,
+  `bash_session`, permission denial, sandbox/write, sandbox/network,
+  credential/proxy injection, guard/timeout, guard/health, guard/repetition,
+  strict capability mismatch, hook failure/audit behavior, and spawn-agent
+  receipts.
+- Revalidated the current 71-fixture suite under strict comparison: 71/71
+  locally, with old simulation paths removed from the conformance runner.
 - Updated the conformance target to fixtures v0.19.2: 69/69, including
   the Anthropic text-plus-reasoning projection guard and text-plus-tool
   projection guards for Anthropic, OpenAI, and Gemini.

@@ -5,7 +5,7 @@ TypeScript reference implementation of [Harnas](https://github.com/Tedo-ai/harna
 **Version 0.2.0** is the post-v0.19 development milestone. It keeps the
 strict TypeScript package scaffold, JSONL Session persistence,
 manifest-schema validation, observation bus, provider projections, ingestors,
-and a scripted conformance runner for `@tedo-ai/harnas-typescript`.
+and a strict conformance runner for `@tedo-ai/harnas-typescript`.
 
 Runtime targets:
 
@@ -61,15 +61,19 @@ const newEvents = await session.eventsSince(0);
 
 ## Status
 
-- v0.19.3 fixture runner: 70/70 fixtures locally, including
-  `expected-projections.jsonl` assertions computed through the exported
-  delegation projection helpers
+- Current development runner: 71/71 fixtures locally against the current spec
+  checkout. The runner is strict and routes scripted provider turns through
+  the real `AgentLoop`, `ToolRegistry`, projections, ingestors, guards,
+  compaction, hooks, and built-ins.
+- Fixture-only stubs remain only at explicit conformance boundaries:
+  scripted providers, conformance-only test tools, and no-network `fetch_url`
+  responses.
 - Cross-language Session JSONL round-trip matrix is wired for TypeScript,
   Go, Ruby, and Python writers/readers
 - Persistence is behind `StorageAdapter`; file-backed JSONL remains the
   default, and database adapters can supply the same three-operation seam.
-- CI runs the v0.19.3 fixture suite on Node 20/22 across Linux, macOS, and
-  Windows, plus Bun and Deno smoke runtimes
+- CI runs the fixture suite on Node 20/22 across Linux, macOS, and Windows,
+  plus Bun and Deno smoke runtimes
 - v1.0.0 still requires release review
 - Future contrib layout reserved with the `@tedo-ai/harnas-typescript/mcp`
   subpath export; core does not depend on MCP.
