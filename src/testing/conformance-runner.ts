@@ -165,7 +165,7 @@ export async function runScriptedSession(
       }
 
       const recordTurn = isRecord(scriptTurn) ? scriptTurn : undefined;
-      if (recordTurn?.expect_request !== undefined && canonicalJson(request) !== canonicalJson(recordTurn.expect_request)) {
+      if (recordTurn?.expect_request !== undefined && !requestValueEqual(request, recordTurn.expect_request)) {
         throw new ConformanceError(
           `request mismatch\nactual:   ${canonicalJson(request)}\nexpected: ${canonicalJson(recordTurn.expect_request)}`,
         );
@@ -219,6 +219,22 @@ export async function runScriptedSession(
   }
 
   return session;
+}
+
+function requestValueEqual(actual: unknown, expected: unknown): boolean {
+  if (expected === "<generated>") {
+    return actual !== undefined && actual !== null && actual !== "";
+  }
+  if (Array.isArray(actual) && Array.isArray(expected)) {
+    return actual.length === expected.length && actual.every((item, index) => requestValueEqual(item, expected[index]));
+  }
+  if (isRecord(actual) && isRecord(expected)) {
+    const actualKeys = Object.keys(actual).sort();
+    const expectedKeys = Object.keys(expected).sort();
+    return canonicalJson(actualKeys) === canonicalJson(expectedKeys) &&
+      expectedKeys.every((key) => requestValueEqual(actual[key], expected[key]));
+  }
+  return canonicalJson(actual) === canonicalJson(expected);
 }
 
 function sanitizeManifest(manifest: ProviderManifest): ProviderManifest {
