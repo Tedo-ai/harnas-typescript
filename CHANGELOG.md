@@ -50,6 +50,8 @@
   duplicate, gapped, or reordered rows fail loudly.
 - Added conformance replay support for malformed streaming provider frames
   and validated against the expanded 71-fixture spec set.
+- Added a README drift check that compares public spec-target and
+  fixture-count claims with the checked-out spec.
 
 ## [0.2.0] — 2026-05-24
 

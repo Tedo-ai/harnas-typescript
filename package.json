@@ -59,6 +59,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "check:drift": "node scripts/check-drift.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run tests/unit",
     "test:conformance:node": "tsx --test tests/conformance/node.test.ts",
