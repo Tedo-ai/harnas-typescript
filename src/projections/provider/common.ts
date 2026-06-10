@@ -1,6 +1,7 @@
 import type { Log } from "../../core/log.js";
 import type { ContentBlock, DocumentContentBlock, ImageContentBlock, MessagePayload } from "../../core/events.js";
 import { messageText } from "../../core/events.js";
+import type { LogEvent } from "../../core/events.js";
 import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,9 +28,50 @@ export interface ProjectionOptions {
   readonly fixturePath?: string;
 }
 
+export type ProjectionEvent = LogEvent | {
+  readonly seq: number;
+  readonly event_type: "user_message";
+  readonly payload: MessagePayload;
+};
+
+export function projectionEvents(log: Log): readonly ProjectionEvent[] {
+  const events = log.events();
+  const revoked = new Set<number>();
+  for (const event of events) {
+    if (event.event_type === "revert" && typeof event.payload.revokes === "number") {
+      revoked.add(event.payload.revokes);
+    }
+  }
+  const replaced = new Set<number>();
+  const summaries: ProjectionEvent[] = [];
+
+  for (const event of events) {
+    if (event.event_type !== "compact" || revoked.has(event.seq)) {
+      continue;
+    }
+    const replaces = Array.isArray(event.payload.replaces) ? event.payload.replaces.filter((seq): seq is number => typeof seq === "number") : [];
+    for (const seq of replaces) {
+      replaced.add(seq);
+    }
+    const first = Math.min(...replaces);
+    if (Number.isFinite(first) && typeof event.payload.summary === "string") {
+      summaries.push({
+        seq: first,
+        event_type: "user_message",
+        payload: { content: [{ type: "text", text: event.payload.summary }], text: event.payload.summary },
+      });
+    }
+  }
+
+  return [
+    ...events.filter((event) => event.event_type !== "compact" && event.event_type !== "revert" && !replaced.has(event.seq)),
+    ...summaries,
+  ].sort((left, right) => left.seq - right.seq);
+}
+
 export function textTurns(log: Log): Array<{ role: "user" | "assistant"; content: string }> {
   const turns: Array<{ role: "user" | "assistant"; content: string }> = [];
-  for (const event of log.events()) {
+  for (const event of projectionEvents(log)) {
     if (event.event_type === "user_message") {
       turns.push({ role: "user", content: messageText(event.payload) });
     } else if (event.event_type === "assistant_message") {

@@ -1,7 +1,8 @@
 import type { Log } from "../../core/log.js";
 import type { ProjectionOptions, ProviderManifest } from "./common.js";
 import { messageText } from "../../core/events.js";
-import { contentBlocksForOpenAI, hasOnlyText } from "./common.js";
+import { contentBlocksForOpenAI, hasOnlyText, projectionEvents } from "./common.js";
+import { canonicalJson } from "../../core/json.js";
 
 export interface OpenAIMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
@@ -35,7 +36,7 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, optio
   if (manifest.system !== undefined && manifest.system.length > 0) {
     messages.push({ role: "system", content: manifest.system });
   }
-  const events = log.events();
+  const events = projectionEvents(log);
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
     if (event === undefined) {
@@ -57,7 +58,7 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, optio
             type: "function",
             function: {
               name: toolUse.payload.name,
-              arguments: JSON.stringify(toolUse.payload.arguments),
+              arguments: canonicalJson(toolUse.payload.arguments),
             },
           });
         }

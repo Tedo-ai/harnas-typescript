@@ -1,6 +1,6 @@
 import type { Log } from "../../core/log.js";
 import type { ProjectionOptions, ProviderManifest } from "./common.js";
-import { hasOnlyText } from "./common.js";
+import { hasOnlyText, projectionEvents } from "./common.js";
 import { messageText } from "../../core/events.js";
 
 export interface GeminiRequest {
@@ -23,12 +23,12 @@ export interface GeminiRequest {
 export function projectGeminiRequest(manifest: ProviderManifest, log: Log, options: ProjectionOptions = {}): GeminiRequest {
   const contents: { role: "user" | "model"; parts: unknown[] }[] = [];
   const toolUseNames = new Map<string, string>();
-  for (const event of log.events()) {
+  for (const event of projectionEvents(log)) {
     if (event.event_type === "tool_use") {
       toolUseNames.set(event.payload.id, event.payload.name);
     }
   }
-  for (const event of log.events()) {
+  for (const event of projectionEvents(log)) {
     if (event.event_type === "user_message") {
       contents.push({ role: "user", parts: geminiParts(event.payload, options) });
     } else if (event.event_type === "assistant_message") {

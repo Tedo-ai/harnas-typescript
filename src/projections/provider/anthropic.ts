@@ -1,6 +1,7 @@
 import type { Log } from "../../core/log.js";
 import type { ProjectionOptions, ProviderManifest } from "./common.js";
-import { contentBlocksForAnthropic, hasOnlyText, textTurns } from "./common.js";
+import { contentBlocksForAnthropic, hasOnlyText, projectionEvents, textTurns } from "./common.js";
+import type { ProjectionEvent } from "./common.js";
 import type { ToolUseEvent } from "../../core/events.js";
 import { messageText } from "../../core/events.js";
 
@@ -33,17 +34,18 @@ export function projectAnthropicRequest(manifest: ProviderManifest, log: Log, op
 
 function anthropicTurns(log: Log, options: ProjectionOptions): AnthropicMessage[] {
   const turns: AnthropicMessage[] = [];
-  for (const event of log.events()) {
+  const events = projectionEvents(log);
+  for (const event of events) {
     if (event.event_type === "user_message") {
-      turns.push({
+      pushAnthropicTurn(turns, {
         role: "user",
         content: hasOnlyText(event.payload) ? messageText(event.payload) : contentBlocksForAnthropic(event.payload, options),
       });
     } else if (event.event_type === "assistant_message") {
-      const toolUses = followingToolUses(log, event.seq);
+      const toolUses = followingToolUses(events, event.seq);
       if (event.payload.reasoning !== undefined || toolUses.length > 0) {
         const text = messageText(event.payload);
-        turns.push({
+        pushAnthropicTurn(turns, {
           role: "assistant",
           content: [
             ...(event.payload.reasoning ?? []).map((item) => ({
@@ -61,20 +63,50 @@ function anthropicTurns(log: Log, options: ProjectionOptions): AnthropicMessage[
           ],
         });
       } else {
-        turns.push({ role: "assistant", content: messageText(event.payload) });
+        const text = messageText(event.payload);
+        if (text.length > 0) {
+          pushAnthropicTurn(turns, { role: "assistant", content: text });
+        }
       }
     } else if (event.event_type === "tool_result") {
-      turns.push({
+      const content: Record<string, unknown> = {
+        type: "tool_result",
+        tool_use_id: event.payload.tool_use_id,
+        content: event.payload.output ?? event.payload.error ?? "",
+      };
+      if (event.payload.error !== null && event.payload.error !== undefined) {
+        content.is_error = true;
+      }
+      pushAnthropicTurn(turns, {
         role: "user",
-        content: [{ type: "tool_result", tool_use_id: event.payload.tool_use_id, content: event.payload.output ?? event.payload.error ?? "" }],
+        content: [content],
       });
     }
   }
   return turns.length > 0 ? turns : textTurns(log);
 }
 
-function followingToolUses(log: Log, seq: number): ToolUseEvent[] {
-  return log.events().filter((event): event is ToolUseEvent => event.event_type === "tool_use" && event.seq === seq + 1);
+function pushAnthropicTurn(turns: AnthropicMessage[], next: AnthropicMessage): void {
+  const previous = turns.at(-1);
+  if (previous?.role !== next.role) {
+    turns.push(next);
+    return;
+  }
+  turns[turns.length - 1] = {
+    role: previous.role,
+    content: [...anthropicContentBlocks(previous.content), ...anthropicContentBlocks(next.content)],
+  };
+}
+
+function anthropicContentBlocks(content: unknown): unknown[] {
+  if (Array.isArray(content)) {
+    return content;
+  }
+  return [{ type: "text", text: String(content) }];
+}
+
+function followingToolUses(events: readonly ProjectionEvent[], seq: number): ToolUseEvent[] {
+  return events.filter((event): event is ToolUseEvent => event.event_type === "tool_use" && event.seq === seq + 1);
 }
 
 function anthropicTools(manifest: ProviderManifest): NonNullable<AnthropicRequest["tools"]> {

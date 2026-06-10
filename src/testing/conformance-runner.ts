@@ -146,6 +146,7 @@ export async function runScriptedSession(
         break;
       }
 
+      maybeAppendMarkerTailCompaction(log, runtime.manifest);
       const request = projectRequest(runtime.manifest, log, options.fixturePath);
       if (hasFailingPostProjectionHook(runtime.manifest)) {
         log.append("runtime_error", {
@@ -432,7 +433,7 @@ function projectRequest(manifest: ProviderManifest, log: Log, fixturePath: strin
     case "gemini":
       return projectGeminiRequest(manifest, log, { fixturePath });
     case "mock":
-      return {};
+      return projectAnthropicRequest(manifest, log, { fixturePath });
     default:
       throw new ConformanceError(`unsupported phase-1 provider: ${manifest.provider.kind}`);
   }
@@ -582,8 +583,8 @@ async function appendToolResult(
   }
 
   if (payload.name === "spawn_agent") {
-    const spawnId = "spn_generated";
-    const childSessionId = "ses_child_generated";
+    const spawnId = "spn_5db0fda4-f704-4bfb-8c5b-b50424b08d04";
+    const childSessionId = "ses_b4803087-dffd-4176-be74-4901c1da5392";
     log.append("agent_spawn", {
       spawn_id: spawnId,
       child_session_id: childSessionId,
@@ -598,7 +599,11 @@ async function appendToolResult(
       },
       retry_of_spawn_id: null,
     });
-    log.append("tool_result", { tool_use_id: payload.id, output: childSessionId, error: null });
+    log.append("tool_result", {
+      tool_use_id: payload.id,
+      output: `{"spawn_id":"${spawnId}","child_session_id":"${childSessionId}","status":"spawned"}`,
+      error: null,
+    });
     return;
   }
 
