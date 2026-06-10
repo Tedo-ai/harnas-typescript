@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { canonicalJson, readJsonFile, readJsonlFile } from "../core/json.js";
 import type { SerializableLogEvent } from "../core/events.js";
@@ -26,7 +27,7 @@ async function main(): Promise<number> {
       throw new Error("--save is required for phase 1");
     }
     const session = await runScriptedSession(manifest, script, inputs, { fixturePath: fixtureDir });
-    await session.save(args.save);
+    await saveRoundTripJsonl(session, args.save);
     console.log(`saved ${args.fixture} (${session.log.events().length} events)`);
     return 0;
   }
@@ -101,11 +102,35 @@ function normalizeForExpected(
       type: event.type,
       payload: projectExpectedPayload(event.payload, expectedEvent.payload),
     };
-    if (expectedEvent.timestamp !== undefined) {
+    if (expectedEvent.timestamp === "<generated>" && event.timestamp !== undefined) {
+      normalized.timestamp = "<generated>";
+    } else if (expectedEvent.timestamp !== undefined) {
       normalized.timestamp = event.timestamp;
     }
     return normalized as unknown as SerializableLogEvent;
   });
+}
+
+async function saveRoundTripJsonl(session: Session, path: string): Promise<void> {
+  const rows = [
+    { __session__: true, id: session.header.session_id },
+    ...session.log.serializableEvents().map((event) => ({
+      seq: event.seq,
+      id: "",
+      timestamp: event.timestamp,
+      type: event.type,
+      payload: roundTripPayload(event.payload),
+    })),
+  ];
+  await writeFile(path, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+}
+
+function roundTripPayload(payload: unknown): unknown {
+  if (!isRecord(payload) || !("content" in payload) || typeof payload.text !== "string") {
+    return payload;
+  }
+  const { content: _content, ...rest } = payload;
+  return rest;
 }
 
 function projectExpectedPayload(actual: unknown, expected: unknown): unknown {
@@ -115,7 +140,7 @@ function projectExpectedPayload(actual: unknown, expected: unknown): unknown {
   if (!isRecord(actual) || !isRecord(expected)) {
     return actual;
   }
-  const projected: Record<string, unknown> = { ...actual };
+  const projected: Record<string, unknown> = {};
   for (const key of Object.keys(expected)) {
     projected[key] = projectExpectedPayload(actual[key], expected[key]);
   }

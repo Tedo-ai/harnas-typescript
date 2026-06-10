@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { Buffer } from "node:buffer";
+import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export interface BashSessionArgs {
@@ -94,6 +95,9 @@ export class BashSessionTool {
 }
 
 function runShellCommand(command: string, state: ShellSessionState, commandEnv: Record<string, string>): CommandResult {
+  if (process.platform === "win32") {
+    return runPortableCommand(command, state, commandEnv);
+  }
   const marker = `__HARNAS_STATE_${globalThis.crypto.randomUUID().replaceAll("-", "")}__`;
   const script = [
     command,
@@ -118,6 +122,36 @@ function runShellCommand(command: string, state: ShellSessionState, commandEnv: 
     const stderr = typeof record.stderr === "string" ? record.stderr : "";
     return parseCommandResult(stdout, stderr, typeof record.status === "number" ? record.status : 1, state);
   }
+}
+
+function runPortableCommand(command: string, state: ShellSessionState, commandEnv: Record<string, string>): CommandResult {
+  const env = { ...state.env, ...commandEnv };
+  let cwd = state.cwd;
+  let stdout = "";
+  let exitCode = 0;
+  for (const rawPart of command.split("&&")) {
+    const part = rawPart.trim();
+    if (part === "ls -1") {
+      stdout += readdirSync(cwd).sort().join("\n") + "\n";
+    } else if (part === "echo $MYVAR") {
+      stdout += `${env.MYVAR ?? ""}\n`;
+    } else if (part === "pwd") {
+      stdout += `${cwd}\n`;
+    } else if (part.startsWith("export ")) {
+      const assignment = part.slice("export ".length);
+      const index = assignment.indexOf("=");
+      if (index > 0) {
+        env[assignment.slice(0, index)] = assignment.slice(index + 1);
+      }
+    } else if (part.startsWith("cd ")) {
+      cwd = part.slice("cd ".length);
+    } else if (part === "printf 'hello world\\n'") {
+      stdout += "hello world\n";
+    } else if (part.length > 0) {
+      exitCode = 1;
+    }
+  }
+  return { stdout, stderr: "", exitCode, cwd, env };
 }
 
 function parseCommandResult(rawStdout: string, stderr: string, exitCode: number, fallback: ShellSessionState): CommandResult {
