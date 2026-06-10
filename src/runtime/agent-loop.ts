@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 import { ConformanceError } from "../core/errors.js";
 import type { EventPayload } from "../core/events.js";
 import type { Log } from "../core/log.js";
@@ -252,13 +254,19 @@ export class AgentLoop {
 
     if (payload.name === "write_file") {
       const sandbox = strategyConfig(this.#manifest, "sandbox/write");
-      const path = typeof payload.arguments.path === "string" ? payload.arguments.path : "";
-      const deny = Array.isArray(sandbox?.deny) ? sandbox.deny.map(String) : [];
-      const allow = Array.isArray(sandbox?.allow) ? sandbox.allow.map(String) : ["."];
-      const denied = deny.some((entry) => path === entry || path.startsWith(`${entry}/`));
-      if (denied) {
-        const message = `Write to '${path}' is not permitted. Allowed paths: [${allow.map((item) => `'${item}'`).join(", ")}]. Denied paths: [${deny.map((item) => `'${item}'`).join(", ")}].`;
+      if (sandbox !== undefined) {
+        const path = typeof payload.arguments.path === "string" ? payload.arguments.path : "";
+        const denyLabels = Array.isArray(sandbox.deny) ? sandbox.deny.map(String) : [];
+        const allowLabels = Array.isArray(sandbox.allow) ? sandbox.allow.map(String) : ["."];
+        const deny = denyLabels.map((entry) => normalizeSandboxPath(entry));
+        const allow = allowLabels.map((entry) => normalizeSandboxPath(entry));
+        const normalized = normalizeSandboxPath(path);
+        const allowed = allow.some((entry) => pathWithin(normalized, entry));
+        const denied = deny.some((entry) => pathWithin(normalized, entry));
+        if (path !== "" && (!allowed || denied)) {
+        const message = `Write to '${path}' is not permitted. Allowed paths: [${allowLabels.map((item) => `'${item}'`).join(", ")}]. Denied paths: [${denyLabels.map((item) => `'${item}'`).join(", ")}].`;
         return deniedResult(payload.id, message);
+        }
       }
     }
 
@@ -266,7 +274,10 @@ export class AgentLoop {
       const sandbox = strategyConfig(this.#manifest, "sandbox/network");
       if (sandbox !== undefined) {
         const url = typeof payload.arguments.url === "string" ? payload.arguments.url : "";
-        const host = url.length > 0 ? new URL(url).hostname : "";
+        const host = safeURLHost(url);
+        if (host === undefined) {
+          return deniedResult(payload.id, "Network call has an unparseable URL and is not permitted.");
+        }
         const allow = Array.isArray(sandbox.allow) ? sandbox.allow.map(String) : [];
         if (allow.length > 0 && !allow.includes(host)) {
           return deniedResult(payload.id, `Network call to '${host}' is not permitted. Allowed hosts: [${allow.map((item) => `'${item}'`).join(", ")}].`);
@@ -569,7 +580,7 @@ function credentialRouteMatches(match: unknown, args: Record<string, unknown>): 
   if (!isRecord(match) || Object.keys(match).length === 0) {
     return true;
   }
-  const host = typeof args.url === "string" ? new URL(args.url).hostname : "";
+  const host = typeof args.url === "string" ? safeURLHost(args.url) ?? "" : "";
   if (typeof match.url_host === "string") {
     return host === match.url_host;
   }
@@ -578,6 +589,36 @@ function credentialRouteMatches(match: unknown, args: Record<string, unknown>): 
     return new RegExp(pattern).test(host);
   }
   return false;
+}
+
+function normalizeSandboxPath(value: string): string {
+  const absolute = resolve(value);
+  if (existsSync(absolute)) {
+    return realpathSync(absolute);
+  }
+  let current = dirname(absolute);
+  let suffix = absolute.slice(current.length + (current.endsWith(sep) ? 0 : 1));
+  while (current !== dirname(current)) {
+    if (existsSync(current)) {
+      return join(realpathSync(current), suffix);
+    }
+    suffix = join(current.slice(dirname(current).length + 1), suffix);
+    current = dirname(current);
+  }
+  return absolute;
+}
+
+function pathWithin(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}${sep}`);
+}
+
+function safeURLHost(value: string): string | undefined {
+  try {
+    const host = new URL(value).hostname;
+    return host.length > 0 ? host : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function credentialNames(template: string): string[] {
