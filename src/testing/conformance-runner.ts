@@ -12,8 +12,10 @@ import { AgentLoop } from "../runtime/agent-loop.js";
 import { delegationTree, descendantTimeline, descendantUsage, openChildren } from "../projections/delegation.js";
 import { Session } from "../core/session.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { sessionJsonl } from "../storage/jsonl.js";
 import type { ProviderManifest } from "../projections/provider/common.js";
 import type { SerializableLogEvent } from "../core/events.js";
+import type { HookHandler } from "../runtime/agent-loop.js";
 import type { ToolDescriptor } from "../tools/types.js";
 
 export interface ProviderScriptTurn {
@@ -64,6 +66,11 @@ interface ProjectionExpectation {
   readonly output: unknown;
 }
 
+interface InputResult {
+  readonly session: Session;
+  readonly shouldCallProvider: boolean;
+}
+
 export async function runFixture(fixturePath: string): Promise<FixtureResult> {
   const name = fixturePath.split(/[\\/]/).at(-1) ?? fixturePath;
   try {
@@ -112,23 +119,28 @@ export async function runScriptedSession(
   options: ScriptedSessionOptions,
 ): Promise<Session> {
   const runtime = buildRuntime({ manifest });
-  const session = options.initialSession ?? new Session();
-  const log = session.log;
+  let session = options.initialSession ?? new Session();
   const provider = new ScriptedConformanceProvider(script);
   const tools = toolRegistryForFixture(runtime.manifest, options.fixturePath);
-  const loopOptions = {
+  const hookHandlers = conformanceHookHandlers();
+  const makeLoop = (current: Session) => new AgentLoop({
     manifest: runtime.manifest,
-    log,
+    log: current.log,
     provider,
     tools,
+    hookHandlers,
     fixturePath: options.fixturePath,
     ...(options.streaming === undefined ? {} : { streaming: options.streaming }),
-  };
-  const loop = new AgentLoop(loopOptions);
+  });
+  let loop = makeLoop(session);
 
   for (const input of inputs) {
-    const shouldCallProvider = appendInput(log, input);
-    if (!shouldCallProvider) {
+    const result = appendInput(session, input);
+    if (result.session !== session) {
+      loop = makeLoop(result.session);
+    }
+    session = result.session;
+    if (!result.shouldCallProvider) {
       continue;
     }
     await loop.runAfterInput();
@@ -137,14 +149,15 @@ export async function runScriptedSession(
   return session;
 }
 
-function appendInput(log: Log, input: unknown): boolean {
+function appendInput(session: Session, input: unknown): InputResult {
+  const log = session.log;
   if (typeof input === "string") {
     appendUserMessage(log, input);
-    return true;
+    return { session, shouldCallProvider: true };
   }
   if (!isRecord(input)) {
     appendUserMessage(log, "");
-    return true;
+    return { session, shouldCallProvider: true };
   }
   if (Array.isArray(input.append_events)) {
     for (const event of input.append_events) {
@@ -152,28 +165,61 @@ function appendInput(log: Log, input: unknown): boolean {
         log.append(event.type as EventTypeForAppend, event.payload as never);
       }
     }
-    return false;
+    return { session, shouldCallProvider: false };
   }
   if (isRecord(input.compact)) {
     log.append("compact", input.compact);
-    return false;
+    return { session, shouldCallProvider: false };
   }
   if (typeof input.revert === "number") {
     log.append("revert", { revokes: input.revert });
-    return false;
+    return { session, shouldCallProvider: false };
   }
-  if (isRecord(input.fork) || input.save_load === true) {
-    return false;
+  if (isRecord(input.fork)) {
+    const atSeq = typeof input.fork.at_seq === "number" ? input.fork.at_seq : log.events().at(-1)?.seq ?? -1;
+    return { session: session.fork(atSeq), shouldCallProvider: false };
+  }
+  if (input.save_load === true) {
+    return {
+      session: Session.fromJsonl(sessionJsonl({ header: session.header, events: log.events() })),
+      shouldCallProvider: false,
+    };
   }
   if (Array.isArray(input.content)) {
     log.append("user_message", { content: input.content as never });
-    return true;
+    return { session, shouldCallProvider: true };
   }
   appendUserMessage(log, "");
-  return true;
+  return { session, shouldCallProvider: true };
 }
 
 type EventTypeForAppend = Parameters<Log["append"]>[0];
+
+function conformanceHookHandlers(): ReadonlyMap<string, HookHandler> {
+  const auditPostToolUse: HookHandler = (context) => {
+    if (context.tool_use?.event_type !== "tool_use" || context.tool_result === undefined) {
+      return;
+    }
+    context.log.append("annotation", {
+      kind: "conformance.hook",
+      data: {
+        tool_use_id: context.tool_use.payload.id,
+        result_seq: context.tool_result.seq,
+      },
+    });
+  };
+  const raiseHook: HookHandler = () => {
+    const error = new Error("conformance hook failure");
+    error.name = "RuntimeError";
+    throw error;
+  };
+  return new Map([
+    ["conformance.audit_post_tool_use", auditPostToolUse],
+    ["conformance.audit_post_tool_use_variant", auditPostToolUse],
+    ["conformance.raise_hook", raiseHook],
+    ["conformance.raise_hook_variant", raiseHook],
+  ]);
+}
 
 class ScriptedConformanceProvider {
   #index = 0;

@@ -15,16 +15,28 @@ import { ingestGeminiResponseEvents } from "../ingestors/gemini.js";
 import { ingestOpenAIResponseEvents } from "../ingestors/openai.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { newSessionId } from "../core/ids.js";
+import type { LogEvent } from "../core/events.js";
 
 export interface ScriptedProvider {
   next(request: unknown): Promise<unknown>;
 }
+
+export interface HookContext {
+  readonly log: Log;
+  readonly request?: unknown;
+  readonly tool_use?: LogEvent;
+  readonly tool_result?: LogEvent;
+  readonly config?: Record<string, unknown>;
+}
+
+export type HookHandler = (context: HookContext) => void;
 
 export interface AgentLoopOptions {
   readonly manifest: ProviderManifest;
   readonly log: Log;
   readonly provider: ScriptedProvider;
   readonly tools: ToolRegistry;
+  readonly hookHandlers?: ReadonlyMap<string, HookHandler>;
   readonly fixturePath?: string;
   readonly streaming?: boolean;
 }
@@ -34,6 +46,7 @@ export class AgentLoop {
   readonly #log: Log;
   readonly #provider: ScriptedProvider;
   readonly #tools: ToolRegistry;
+  readonly #hookHandlers: ReadonlyMap<string, HookHandler>;
   readonly #fixturePath: string | undefined;
   readonly #streaming: boolean;
   #providerCalls = 0;
@@ -43,6 +56,7 @@ export class AgentLoop {
     this.#log = options.log;
     this.#provider = options.provider;
     this.#tools = options.tools;
+    this.#hookHandlers = options.hookHandlers ?? new Map();
     this.#fixturePath = options.fixturePath;
     this.#streaming = options.streaming ?? false;
   }
@@ -58,14 +72,7 @@ export class AgentLoop {
         return;
       }
       const request = this.#projectRequest();
-      if (this.#hasHook("conformance.raise_hook")) {
-        this.#log.append("runtime_error", {
-          source: "hook",
-          handler: "conformance.raise_hook",
-          error_class: "RuntimeError",
-          message: "conformance hook failure",
-          terminal: true,
-        });
+      if (!this.#invokeHooks("post_projection", { log: this.#log, request })) {
         return;
       }
       const response = await this.#provider.next(request);
@@ -198,12 +205,19 @@ export class AgentLoop {
     try {
       const args = this.#credentialProxyArgs(payload);
       const output = await this.#tools.dispatch(payload.name, args);
-      this.#log.append("tool_result", {
+      const toolResult = this.#log.append("tool_result", {
         tool_use_id: payload.id,
         output,
         error: null,
       });
-      this.#maybeAppendPostToolUseAudit(payload.id);
+      const toolUseEvent = this.#log.events().find((event) =>
+        event.event_type === "tool_use" && event.payload.id === payload.id
+      );
+      this.#invokeHooks("post_tool_use", {
+        log: this.#log,
+        ...(toolUseEvent === undefined ? {} : { tool_use: toolUseEvent }),
+        tool_result: toolResult,
+      });
       this.#maybeAppendToolOutputCap(payload.name, output);
     } catch (error) {
       this.#log.append("tool_result", {
@@ -352,19 +366,6 @@ export class AgentLoop {
     });
   }
 
-  #maybeAppendPostToolUseAudit(toolUseId: string): void {
-    if (!this.#hasHook("conformance.audit_post_tool_use")) {
-      return;
-    }
-    this.#log.append("annotation", {
-      kind: "conformance.hook",
-      data: {
-        tool_use_id: toolUseId,
-        result_seq: this.#log.events().at(-1)?.seq,
-      },
-    });
-  }
-
   #maybeAppendPostToolGuards(): boolean {
     return this.#maybeAppendRepetitionGuard() || this.#maybeAppendHealthGuard();
   }
@@ -486,9 +487,42 @@ export class AgentLoop {
     return true;
   }
 
-  #hasHook(handler: string): boolean {
+  #hooksFor(point: string): readonly Record<string, unknown>[] {
     const hooks = (this.#manifest as unknown as { readonly hooks?: readonly unknown[] }).hooks ?? [];
-    return hooks.some((hook) => isRecord(hook) && hook.handler === handler);
+    return hooks.filter((hook): hook is Record<string, unknown> => {
+      return isRecord(hook) &&
+        typeof hook.handler === "string" &&
+        typeof hook.point === "string" &&
+        normalizeHookPoint(hook.point) === point;
+    });
+  }
+
+  #invokeHooks(point: string, context: HookContext): boolean {
+    for (const hook of this.#hooksFor(point)) {
+      const handlerName = String(hook.handler);
+      const handler = this.#hookHandlers.get(handlerName);
+      if (handler === undefined) {
+        continue;
+      }
+      try {
+        handler({
+          ...context,
+          config: isRecord(hook.config) ? hook.config : {},
+        });
+      } catch (error) {
+        if ((hook.on_error ?? "isolate") === "fail_turn") {
+          this.#log.append("runtime_error", {
+            source: "hook",
+            handler: handlerName,
+            error_class: error instanceof Error ? error.name : "RuntimeError",
+            message: error instanceof Error ? error.message : String(error),
+            terminal: true,
+          });
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   #maybeAppendMarkerTailCompaction(): void {
@@ -498,20 +532,85 @@ export class AgentLoop {
     }
     const maxMessages = typeof config.max_messages === "number" ? config.max_messages : 4;
     const keepRecent = typeof config.keep_recent === "number" ? config.keep_recent : 2;
-    const compactEvents = this.#log.events().filter((event) => event.event_type === "compact");
-    const lastEvent = this.#log.events().at(-1);
-    if (maxMessages === 3 && lastEvent?.event_type === "user_message" && lastEvent.payload.text === "continue after compaction") {
-      this.#log.append("compact", { replaces: [0, 1, 5], summary: "[snipped 3 earlier messages]" });
-      return;
-    }
-    if (compactEvents.length === 0 && this.#log.events().length > maxMessages) {
-      const replaceCount = maxMessages - keepRecent + 1;
+    const messages = messageEvents(this.#log);
+    if (messages.length > maxMessages) {
+      const candidates = messages.slice(0, Math.max(0, messages.length - keepRecent)).map((event) => event.seq);
+      const safeSeqs = toolPairSafeRange(this.#log, candidates);
+      if (safeSeqs.length === 0) {
+        return;
+      }
       this.#log.append("compact", {
-        replaces: Array.from({ length: replaceCount }, (_, index) => index),
-        summary: `[snipped ${replaceCount} earlier messages]`,
+        replaces: safeSeqs,
+        summary: `[snipped ${safeSeqs.length} earlier messages]`,
       });
     }
   }
+}
+
+function normalizeHookPoint(point: string): string {
+  return point.startsWith(":") ? point.slice(1) : point;
+}
+
+function messageEvents(log: Log): readonly LogEvent[] {
+  const replaced = replacedSeqs(log);
+  return log.events().filter((event) => {
+    if (replaced.has(event.seq)) {
+      return false;
+    }
+    return event.event_type === "user_message" ||
+      event.event_type === "assistant_message" ||
+      event.event_type === "tool_use" ||
+      event.event_type === "tool_result";
+  });
+}
+
+function replacedSeqs(log: Log): ReadonlySet<number> {
+  const revoked = new Set<number>();
+  for (const event of log.events()) {
+    if (event.event_type === "revert" && typeof event.payload.revokes === "number") {
+      revoked.add(event.payload.revokes);
+    }
+  }
+
+  const replaced = new Set<number>();
+  for (const event of log.events()) {
+    if (event.event_type !== "compact" || revoked.has(event.seq) || !Array.isArray(event.payload.replaces)) {
+      continue;
+    }
+    for (const seq of event.payload.replaces) {
+      if (typeof seq === "number") {
+        replaced.add(seq);
+      }
+    }
+  }
+  return replaced;
+}
+
+function toolPairSafeRange(log: Log, candidates: readonly number[]): readonly number[] {
+  const candidateSet = new Set(candidates);
+  const safe = new Set(candidates);
+  const toolUses = new Map<string, number>();
+  const toolResults = new Map<string, number>();
+  for (const event of log.events()) {
+    if (event.event_type === "tool_use") {
+      toolUses.set(event.payload.id, event.seq);
+    } else if (event.event_type === "tool_result") {
+      toolResults.set(event.payload.tool_use_id, event.seq);
+    }
+  }
+  for (const [id, useSeq] of toolUses) {
+    const resultSeq = toolResults.get(id);
+    if (resultSeq === undefined) {
+      continue;
+    }
+    const useIn = candidateSet.has(useSeq);
+    const resultIn = candidateSet.has(resultSeq);
+    if (useIn !== resultIn) {
+      safe.delete(useSeq);
+      safe.delete(resultSeq);
+    }
+  }
+  return [...safe].sort((left, right) => left - right);
 }
 
 function isProviderErrorResponse(response: unknown): response is { readonly error: { readonly status: number; readonly body?: string } } {

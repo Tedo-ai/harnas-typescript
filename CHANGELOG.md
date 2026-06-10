@@ -13,8 +13,8 @@
   credential/proxy injection, guard/timeout, guard/health, guard/repetition,
   strict capability mismatch, hook failure/audit behavior, and spawn-agent
   receipts.
-- Revalidated the current 71-fixture suite under strict comparison: 71/71
-  locally, with old simulation paths removed from the conformance runner.
+- Revalidated the runtime path under strict comparison, with old simulation
+  paths removed from the conformance runner.
 - Updated the conformance target to fixtures v0.19.2: 69/69, including
   the Anthropic text-plus-reasoning projection guard and text-plus-tool
   projection guards for Anthropic, OpenAI, and Gemini.
@@ -49,11 +49,16 @@
 - Enforced dense Event `seq` validation when parsing Session JSONL so
   duplicate, gapped, or reordered rows fail loudly.
 - Added conformance replay support for malformed streaming provider frames
-  and validated against the expanded 71-fixture spec set.
+  and validated against the expanded fixture set.
 - Added a README drift check that compares public spec-target and
   fixture-count claims with the checked-out spec.
 - Pinned the README conformance claim to disclose the open MarkerTail,
   manifest hook, and fork implementation gaps before v1.0.0.
+- Replaced the disclosed MarkerTail, manifest-hook, and fork/save-load
+  implementation gaps with real runtime behavior and validated against the
+  expanded 75-fixture spec set.
+- Added canary coverage for fixture-aware implementation behavior via
+  MarkerTail, hook, and fork variants.
 
 ## [0.2.0] — 2026-05-24
 

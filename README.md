@@ -62,12 +62,12 @@ const newEvents = await session.eventsSince(0);
 
 ## Status
 
-- Current runtime conformance: 71/71 fixtures locally against the current
-  spec checkout, with disclosed implementation gaps. The runner is strict,
-  but three fixture-aware implementation shims still need to be replaced by
-  real MarkerTail tool-pair-safe compaction, manifest hook dispatch, and
-  `Session.fork(at_seq)` behavior before the implementation can claim full
-  conformance.
+- Current runtime conformance: 75/75 fixtures locally against the current
+  spec checkout. The runner is strict, MarkerTail compaction is
+  tool-pair-safe, manifest hooks dispatch through registered handlers, and
+  `Session.fork(at_seq)` rewinds the Log instead of passing vacuously.
+- Disclosed v1.0 footnotes: Windows `bash_session` behavior and
+  receipt-only `spawn_agent`.
 - Fixture-only stubs remain only at explicit conformance boundaries:
   scripted providers, conformance-only test tools, and no-network `fetch_url`
   responses.

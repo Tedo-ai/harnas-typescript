@@ -56,6 +56,19 @@ export class Session {
     }
   }
 
+  fork(atSeq: number): Session {
+    const events = this.log.events().filter((event) => event.seq <= atSeq);
+    return new Session({
+      ...this.header,
+      session_id: newSessionId(),
+      metadata: {
+        ...(this.header.metadata ?? {}),
+        forked_from: this.header.session_id,
+        forked_at_seq: atSeq,
+      },
+    }, new Log(events));
+  }
+
   static async load(path: string): Promise<Session> {
     const adapter = new FileStorageAdapter(path);
     return await Session.open({ storage: adapter });
