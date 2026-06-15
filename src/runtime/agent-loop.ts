@@ -79,7 +79,7 @@ export class AgentLoop {
       this.#providerCalls += 1;
 
       if (isProviderErrorResponse(response)) {
-        this.#log.append("provider_error", providerErrorPayload(response.error, attempt));
+        this.#log.append("provider_error", providerErrorPayload(response.error, attempt, this.#manifest.provider.kind));
         attempt += 1;
         if (response.error.status === 503) {
           continue;
@@ -169,11 +169,11 @@ export class AgentLoop {
     }
     for (const item of response) {
       if (isRecord(item) && isRecord(item.error)) {
-        this.#log.append("provider_error", providerErrorPayload(item.error, 1));
+        this.#log.append("provider_error", providerErrorPayload(item.error, 1, this.#manifest.provider.kind));
         return;
       }
       if (isRecord(item) && isRecord(item.malformed_frame)) {
-        this.#log.append("provider_error", providerErrorPayload(item.malformed_frame, 1));
+        this.#log.append("provider_error", providerErrorPayload(item.malformed_frame, 1, this.#manifest.provider.kind));
         return;
       }
       if (!isRecord(item) || typeof item.type !== "string" || !isRecord(item.payload)) {
@@ -344,7 +344,7 @@ export class AgentLoop {
   #stampAssistantPayload(payload: EventPayload<"assistant_message">): EventPayload<"assistant_message"> {
     return {
       ...payload,
-      provider: payload.provider ?? (this.#manifest.provider.kind === "mock" ? "unknown" : this.#manifest.provider.kind),
+      provider: this.#manifest.provider.kind,
       model: payload.model ?? this.#manifest.provider.model,
       ...(payload.usage === undefined ? {} : { usage: normalizeUsage(payload.usage) }),
     };
@@ -617,13 +617,13 @@ function isProviderErrorResponse(response: unknown): response is { readonly erro
   return isRecord(response) && isRecord(response.error) && typeof response.error.status === "number";
 }
 
-function providerErrorPayload(error: Record<string, unknown>, attempt: number): Record<string, unknown> {
+function providerErrorPayload(error: Record<string, unknown>, attempt: number, provider: string): Record<string, unknown> {
   const status = typeof error.status === "number" ? error.status : null;
   const body = typeof error.body === "string" ? error.body : `HTTP ${status}`;
   const malformed = status === null;
   const message = typeof error.message === "string" ? error.message : malformed ? String(body) : `HTTP ${status}: ${body}`;
   return {
-    provider: "unknown",
+    provider,
     status,
     error_class: malformed ? "Harnas::Providers::Error" : "Harnas::Providers::HTTPError",
     message,
