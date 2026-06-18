@@ -16,12 +16,13 @@ export type {
 export { messageText, normalizeMessagePayload } from "./core/events.js";
 export type { Brand, EventId, SessionId, ToolCallId } from "./core/ids.js";
 export { brand, eventIdForSeq, newEventId, newSessionId } from "./core/ids.js";
+export { canonicalizeJCSV1JSON, contentHashForEventRowJSON, InvalidUnicodeError } from "./core/jcs.js";
 export { Log, appendUserMessage } from "./core/log.js";
 export { createLogEvent, createLogEventDraft, createLogEventFromDraft } from "./core/log.js";
 export { Session } from "./core/session.js";
 export type { SessionOpenOptions } from "./core/session.js";
 export type { SessionSnapshot, StorageAdapter } from "./storage/storage-adapter.js";
-export { FileStorageAdapter, MemoryStorageAdapter } from "./storage/index.js";
+export { FileStorageAdapter, MemoryStorageAdapter, StorageConflictError } from "./storage/index.js";
 export { ObservationBus } from "./core/observation-bus.js";
 export type { Observation, ObservationSubscriber } from "./core/observation-bus.js";
 export { ConformanceError, HarnasError, ManifestError, ProviderError } from "./core/errors.js";

@@ -2,8 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added v0.20 durability primitives: harnas-jcs-v1 canonicalization with a
+  BigInt-safe parser, Event `content_hash`, and the OCC `expected_next_seq`
+  append fence on storage adapters.
+- Added fixture-gated tests for the §24 oracle corpus and §21 storage law
+  fixtures.
+
 ### Changed
 
+- Updated the conformance target to fixtures v0.20.0: 75/75.
 - Reset the conformance runner to the strict runtime path: scripted provider
   turns now execute through `AgentLoop`, `ToolRegistry`, provider projections,
   ingestors, guards, hooks, compaction, streaming handling, and built-ins

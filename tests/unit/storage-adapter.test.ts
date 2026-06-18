@@ -2,7 +2,14 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { FileStorageAdapter, MemoryStorageAdapter, Session, createLogEventDraft, messageText } from "../../src/index.js";
+import {
+  FileStorageAdapter,
+  MemoryStorageAdapter,
+  Session,
+  StorageConflictError,
+  createLogEventDraft,
+  messageText,
+} from "../../src/index.js";
 
 describe("StorageAdapter", () => {
   it("persists appended events and supports seq cursors", async () => {
@@ -63,6 +70,37 @@ describe("StorageAdapter", () => {
     expect(event.timestamp).toBe("2026-06-01T00:00:00.000Z");
     expect(loaded?.id).toBe(draft.id);
     expect(loaded?.timestamp).toBe("2026-06-01T00:00:00.000Z");
+  });
+
+  it("passes the OCC conditional append storage-law fixture", async () => {
+    const law = JSON.parse(
+      await readFile(
+        join(process.env.HARNAS_SPEC ?? join(process.cwd(), "..", "harnas"), "conformance/storage-laws/occ-conditional-append/law.json"),
+        "utf8",
+      ),
+    ) as { readonly operations: readonly Record<string, unknown>[] };
+    const storage = new MemoryStorageAdapter();
+
+    for (const operation of law.operations) {
+      if (operation.op === "append_event") {
+        const expectSpec = operation.expect as { readonly ok: boolean; readonly row?: Record<string, unknown>; readonly reason?: string; readonly current_next_seq?: number };
+        const draft = operation.draft as Parameters<MemoryStorageAdapter["appendEvent"]>[0];
+        if (expectSpec.ok) {
+          const row = await storage.appendEvent(draft, operation.expected_next_seq as number | undefined);
+          expect(row.seq).toBe(expectSpec.row?.seq);
+          expect(row.id).toBe(expectSpec.row?.id);
+          expect(row.timestamp).toBe(expectSpec.row?.timestamp);
+          expect(row.event_type).toBe(expectSpec.row?.type);
+          expect(row.payload).toEqual(expectSpec.row?.payload);
+        } else {
+          await expect(storage.appendEvent(draft, operation.expected_next_seq as number | undefined))
+            .rejects.toMatchObject({ reason: expectSpec.reason, current_next_seq: expectSpec.current_next_seq });
+        }
+      } else if (operation.op === "events_since") {
+        const rows = await storage.eventsSince(operation.cursor as number | null);
+        expect(rows.map((row) => row.id)).toEqual(["evt_occ_0", "evt_occ_1"]);
+      }
+    }
   });
 
   it("fails loudly on a torn final event row", async () => {

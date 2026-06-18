@@ -1,7 +1,7 @@
 import type { EventDraft, EventType, LogEvent, SessionHeader } from "../core/events.js";
 import { newSessionId } from "../core/ids.js";
 import { createLogEventFromDraft } from "../core/log.js";
-import type { HeaderWritableStorageAdapter, SessionSnapshot } from "./storage-adapter.js";
+import { StorageConflictError, type HeaderWritableStorageAdapter, type SessionSnapshot } from "./storage-adapter.js";
 
 export class MemoryStorageAdapter implements HeaderWritableStorageAdapter {
   #header: SessionHeader;
@@ -18,13 +18,20 @@ export class MemoryStorageAdapter implements HeaderWritableStorageAdapter {
 
   async appendEvent<TType extends EventType>(
     draft: EventDraft<TType>,
+    expectedNextSeq?: number,
   ): Promise<Extract<LogEvent, { event_type: TType }>> {
+    if (expectedNextSeq !== undefined && expectedNextSeq !== this.#events.length) {
+      throw new StorageConflictError(this.#events.length);
+    }
     const event = createLogEventFromDraft(this.#events.length, draft);
     this.#events.push(event);
     return event;
   }
 
-  async eventsSince(cursor: number): Promise<readonly LogEvent[]> {
+  async eventsSince(cursor: number | null): Promise<readonly LogEvent[]> {
+    if (cursor === null) {
+      return [...this.#events];
+    }
     return this.#events.filter((event) => event.seq > cursor);
   }
 

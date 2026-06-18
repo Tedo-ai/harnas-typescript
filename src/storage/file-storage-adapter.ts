@@ -4,7 +4,7 @@ import type { EventDraft, EventType, LogEvent, SessionHeader } from "../core/eve
 import { newSessionId } from "../core/ids.js";
 import { createLogEventFromDraft } from "../core/log.js";
 import { parseSessionJsonl, sessionJsonl } from "./jsonl.js";
-import type { HeaderWritableStorageAdapter, SessionSnapshot } from "./storage-adapter.js";
+import { StorageConflictError, type HeaderWritableStorageAdapter, type SessionSnapshot } from "./storage-adapter.js";
 
 export class FileStorageAdapter implements HeaderWritableStorageAdapter {
   readonly #path: string;
@@ -30,15 +30,22 @@ export class FileStorageAdapter implements HeaderWritableStorageAdapter {
 
   async appendEvent<TType extends EventType>(
     draft: EventDraft<TType>,
+    expectedNextSeq?: number,
   ): Promise<Extract<LogEvent, { event_type: TType }>> {
     const snapshot = await this.loadSession();
+    if (expectedNextSeq !== undefined && expectedNextSeq !== snapshot.events.length) {
+      throw new StorageConflictError(snapshot.events.length);
+    }
     const event = createLogEventFromDraft(snapshot.events.length, draft);
     await this.#write({ header: snapshot.header, events: [...snapshot.events, event] });
     return event;
   }
 
-  async eventsSince(cursor: number): Promise<readonly LogEvent[]> {
+  async eventsSince(cursor: number | null): Promise<readonly LogEvent[]> {
     const snapshot = await this.loadSession();
+    if (cursor === null) {
+      return snapshot.events;
+    }
     return snapshot.events.filter((event) => event.seq > cursor);
   }
 
