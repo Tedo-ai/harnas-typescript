@@ -3,6 +3,7 @@ import type { ProjectionOptions, ProviderManifest } from "./common.js";
 import { messageText } from "../../core/events.js";
 import { contentBlocksForOpenAI, hasOnlyText, projectionEvents } from "./common.js";
 import { canonicalJson } from "../../core/json.js";
+import { carrierWire } from "../../provider-carriers.js";
 
 export interface OpenAIMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
@@ -48,6 +49,7 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, optio
         content: hasOnlyText(event.payload) ? messageText(event.payload) : contentBlocksForOpenAI(event.payload, options),
       });
     } else if (event.event_type === "assistant_message") {
+      const carried = carrierWire(event.payload.provider_items, "openai.chat_completions");
       const toolCalls: Array<NonNullable<OpenAIMessage["tool_calls"]>[number]> = [];
       let scan = index + 1;
       while (events[scan]?.event_type === "tool_use") {
@@ -66,9 +68,13 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, optio
       }
       if (toolCalls.length > 0) {
         const text = messageText(event.payload);
-        messages.push({ role: "assistant", content: text.length > 0 ? text : null, tool_calls: toolCalls });
+        messages.push({
+          ...(isOpenAIMessage(carried) ? carried : { role: "assistant", content: text.length > 0 ? text : null }),
+          role: "assistant",
+          tool_calls: toolCalls,
+        });
       } else {
-        messages.push({ role: "assistant", content: messageText(event.payload) });
+        messages.push(isOpenAIMessage(carried) ? carried : { role: "assistant", content: messageText(event.payload) });
       }
     } else if (event.event_type === "tool_result") {
       messages.push({
@@ -88,6 +94,10 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, optio
     return { ...request, tools };
   }
   return request;
+}
+
+function isOpenAIMessage(value: unknown): value is OpenAIMessage {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && (value as { role?: unknown }).role === "assistant";
 }
 
 function openAITools(manifest: ProviderManifest): NonNullable<OpenAIRequest["tools"]> {

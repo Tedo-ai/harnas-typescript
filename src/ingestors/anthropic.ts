@@ -1,5 +1,6 @@
 import type { EventPayload } from "../core/events.js";
 import { normalizeUsage } from "../core/usage.js";
+import { providerCarrier } from "../provider-carriers.js";
 
 export interface AnthropicContentBlock {
   readonly type?: string;
@@ -38,22 +39,70 @@ export function ingestAnthropicResponseEvents(
       type: "text",
       text: block.thinking ?? "",
       ...(typeof block.signature === "string" ? { signature: block.signature } : {}),
+      ...(typeof block.signature === "string"
+        ? {
+            provider_parts: [
+              providerCarrier({
+                destination: "anthropic.messages",
+                index: 0,
+                kind: "anthropic.content_block",
+                wire: block,
+                canonicalRefs: ["payload.reasoning[0]"],
+              }),
+            ],
+          }
+        : {}),
     }));
+  const hasCarrierData = (response.content ?? []).some((block) => block.type === "thinking" && typeof block.signature === "string");
+  const carrierContent = (response.content ?? []).filter((block) => block.type !== "tool_use");
   const events: Array<
     | { readonly type: "assistant_message"; readonly payload: EventPayload<"assistant_message"> }
     | { readonly type: "tool_use"; readonly payload: EventPayload<"tool_use"> }
   > = [
     {
       type: "assistant_message",
-      payload: {
-        content: [{ type: "text", text }],
+      payload: ({
+        ...(!hasCarrierData || text.length > 0 ? { content: [{ type: "text" as const, text }] } : {}),
         text,
         stop_reason: response.stop_reason === "tool_use" ? "tool_use" : "end_turn",
         usage: normalizeUsage(response.usage),
         provider: "anthropic",
         ...(response.model !== undefined ? { model: response.model } : {}),
         ...(reasoning.length > 0 ? { reasoning } : {}),
-      },
+        ...(hasCarrierData && text.length > 0
+          ? {
+              content: [{
+                type: "text",
+                text,
+                provider_parts: [
+                  providerCarrier({
+                    destination: "anthropic.messages",
+                    index: 0,
+                    kind: "anthropic.content_block",
+                    wire: { type: "text", text },
+                    canonicalRefs: ["payload.content[0]"],
+                  }),
+                ],
+              }],
+            }
+          : {}),
+        ...(hasCarrierData && carrierContent.length > 0
+          ? {
+              provider_items: [
+                providerCarrier({
+                  destination: "anthropic.messages",
+                  index: 0,
+                  kind: "anthropic.content",
+                  wire: carrierContent,
+                  canonicalRefs: [
+                    "payload.reasoning[0]",
+                    ...(text.length > 0 ? ["payload.content[0]"] : []),
+                  ],
+                }),
+              ],
+            }
+          : {}),
+      }) as EventPayload<"assistant_message">,
     },
   ];
   for (const block of response.content ?? []) {

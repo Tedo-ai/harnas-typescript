@@ -4,6 +4,7 @@ import { contentBlocksForAnthropic, hasOnlyText, projectionEvents, textTurns } f
 import type { ProjectionEvent } from "./common.js";
 import type { ToolUseEvent } from "../../core/events.js";
 import { messageText } from "../../core/events.js";
+import { carrierWires, providerPartWire } from "../../provider-carriers.js";
 
 export interface AnthropicMessage {
   readonly role: "user" | "assistant";
@@ -43,17 +44,23 @@ function anthropicTurns(log: Log, options: ProjectionOptions): AnthropicMessage[
       });
     } else if (event.event_type === "assistant_message") {
       const toolUses = followingToolUses(events, event.seq);
+      const carried = carrierWires(event.payload.provider_items, "anthropic.messages");
       if (event.payload.reasoning !== undefined || toolUses.length > 0) {
         const text = messageText(event.payload);
         pushAnthropicTurn(turns, {
           role: "assistant",
           content: [
-            ...(event.payload.reasoning ?? []).map((item) => ({
-              type: "thinking",
-              thinking: typeof item.text === "string" ? item.text : "",
-              ...(typeof item.signature === "string" ? { signature: item.signature } : {}),
-            })),
-            ...(text.length > 0 ? [{ type: "text", text }] : []),
+            ...(carried ?? [
+              ...(event.payload.reasoning ?? []).map((item) => {
+                const wire = providerPartWire(item, "anthropic.messages");
+                return wire ?? {
+                  type: "thinking",
+                  thinking: typeof item.text === "string" ? item.text : "",
+                  ...(typeof item.signature === "string" ? { signature: item.signature } : {}),
+                };
+              }),
+              ...(text.length > 0 ? [{ type: "text", text }] : []),
+            ]),
             ...toolUses.map((toolUse) => ({
               type: "tool_use",
               id: toolUse.payload.id,

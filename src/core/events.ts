@@ -1,5 +1,6 @@
 import type { EventId, SessionId } from "./ids.js";
 import type { CanonicalUsage } from "./usage.js";
+import type { ProviderCarrier } from "../provider-carriers.js";
 
 export type StopReason = "end_turn" | "tool_use" | "runtime_error";
 
@@ -8,6 +9,7 @@ export type TokenUsage = CanonicalUsage;
 export interface TextContentBlock {
   readonly type: "text";
   readonly text: string;
+  readonly provider_parts?: readonly ProviderCarrier[];
 }
 
 export interface AttachmentSourceBase64 {
@@ -51,6 +53,7 @@ export interface MessagePayload {
   readonly provider?: string;
   readonly model?: string;
   readonly reasoning?: readonly Record<string, unknown>[];
+  readonly provider_items?: readonly ProviderCarrier[];
 }
 
 export interface UserMessageEvent {
@@ -208,8 +211,12 @@ export function normalizeMessagePayload(payload: unknown): MessagePayload {
     return { content: [] };
   }
 
-  const raw = payload as { readonly text?: unknown; readonly content?: unknown };
+  const raw = payload as { readonly text?: unknown; readonly content?: unknown; readonly provider_items?: unknown };
   if (Array.isArray(raw.content)) {
+    return payload as MessagePayload;
+  }
+
+  if (Array.isArray(raw.provider_items)) {
     return payload as MessagePayload;
   }
 

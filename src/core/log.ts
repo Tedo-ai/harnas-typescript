@@ -83,6 +83,10 @@ export function createLogEventFromDraft<TType extends EventType>(
 
 function serializePayload(payload: LogEvent["payload"]): LogEvent["payload"] {
   if ("content" in payload && typeof payload.text === "string") {
+    const content = Array.isArray(payload.content) ? payload.content : [];
+    if (payload.provider_items !== undefined || content.some(contentBlockNeedsPreservation)) {
+      return payload;
+    }
     const serialized: Record<string, unknown> = { text: payload.text };
     if (payload.stop_reason !== undefined) {
       serialized.stop_reason = payload.stop_reason;
@@ -102,4 +106,12 @@ function serializePayload(payload: LogEvent["payload"]): LogEvent["payload"] {
     return serialized as LogEvent["payload"];
   }
   return payload;
+}
+
+function contentBlockNeedsPreservation(block: unknown): boolean {
+  if (typeof block !== "object" || block === null || Array.isArray(block)) {
+    return false;
+  }
+  const record = block as Record<string, unknown>;
+  return record.provider_parts !== undefined || record.type !== "text";
 }

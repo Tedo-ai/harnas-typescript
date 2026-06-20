@@ -2,6 +2,7 @@ import type { Log } from "../../core/log.js";
 import type { ContentBlock, DocumentContentBlock, ImageContentBlock, MessagePayload } from "../../core/events.js";
 import { messageText } from "../../core/events.js";
 import type { LogEvent } from "../../core/events.js";
+import { providerPartWire } from "../../provider-carriers.js";
 import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -88,6 +89,10 @@ export function hasOnlyText(payload: MessagePayload): boolean {
 export function contentBlocksForAnthropic(payload: MessagePayload, options: ProjectionOptions = {}): unknown[] {
   return payload.content.map((block) => {
     if (block.type === "text") {
+      const wire = providerPartWire(block, "anthropic.messages");
+      if (wire !== undefined) {
+        return wire;
+      }
       return { type: "text", text: block.text };
     }
     if (block.type === "image" || block.type === "document") {
@@ -108,6 +113,11 @@ export function contentBlocksForOpenAI(payload: MessagePayload, options: Project
   const blocks: unknown[] = [];
   for (const block of payload.content) {
     if (block.type === "text") {
+      const wire = providerPartWire(block, "openai.chat_completions");
+      if (wire !== undefined) {
+        blocks.push(wire);
+        continue;
+      }
       blocks.push({ type: "text", text: block.text });
     } else if (block.type === "image") {
       blocks.push({

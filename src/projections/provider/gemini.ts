@@ -2,6 +2,8 @@ import type { Log } from "../../core/log.js";
 import type { ProjectionOptions, ProviderManifest } from "./common.js";
 import { hasOnlyText, projectionEvents } from "./common.js";
 import { messageText } from "../../core/events.js";
+import type { MessagePayload } from "../../core/events.js";
+import { providerPartWire } from "../../provider-carriers.js";
 
 export interface GeminiRequest {
   readonly model: string;
@@ -32,7 +34,10 @@ export function projectGeminiRequest(manifest: ProviderManifest, log: Log, optio
     if (event.event_type === "user_message") {
       contents.push({ role: "user", parts: geminiParts(event.payload, options) });
     } else if (event.event_type === "assistant_message") {
-      contents.push({ role: "model", parts: messageText(event.payload).length > 0 ? [{ text: messageText(event.payload) }] : [] });
+      const parts = hasGeminiCarriers(event.payload)
+        ? geminiParts(event.payload)
+        : (messageText(event.payload).length > 0 ? [{ text: messageText(event.payload) }] : []);
+      contents.push({ role: "model", parts });
     } else if (event.event_type === "tool_use") {
       const part = {
         functionCall: {
@@ -85,12 +90,22 @@ export function projectGeminiRequest(manifest: ProviderManifest, log: Log, optio
   };
 }
 
-function geminiParts(payload: Parameters<typeof hasOnlyText>[0], _options: ProjectionOptions): unknown[] {
+function geminiParts(payload: Parameters<typeof hasOnlyText>[0], _options: ProjectionOptions = {}): unknown[] {
   if (hasOnlyText(payload)) {
+    const carried = payload.content
+      .map((block) => providerPartWire(block, "gemini.generateContent"))
+      .filter((wire): wire is Record<string, unknown> => wire !== undefined);
+    if (carried.length > 0) {
+      return carried;
+    }
     return [{ text: messageText(payload) }];
   }
   return payload.content.map((block) => {
     if (block.type === "text") {
+      const wire = providerPartWire(block, "gemini.generateContent");
+      if (wire !== undefined) {
+        return wire;
+      }
       return { text: block.text };
     }
     if (block.type === "image" || block.type === "document") {
@@ -103,4 +118,8 @@ function geminiParts(payload: Parameters<typeof hasOnlyText>[0], _options: Proje
     }
     return {};
   });
+}
+
+function hasGeminiCarriers(payload: MessagePayload): boolean {
+  return payload.content.some((block) => providerPartWire(block, "gemini.generateContent") !== undefined);
 }

@@ -1,5 +1,6 @@
 import type { EventPayload } from "../core/events.js";
 import { normalizeUsage } from "../core/usage.js";
+import { providerCarrier } from "../provider-carriers.js";
 
 export interface OpenAIResponse {
   readonly model?: string;
@@ -7,7 +8,7 @@ export interface OpenAIResponse {
     readonly message?: {
       readonly content?: string | null;
       readonly reasoning?: string;
-      readonly reasoning_details?: readonly { readonly type?: string; readonly text?: string }[];
+      readonly reasoning_details?: readonly Record<string, unknown>[];
       readonly tool_calls?: readonly {
         readonly id?: string;
         readonly function?: {
@@ -37,6 +38,7 @@ export function ingestOpenAIResponseEvents(
   const message = choice?.message;
   const text = choice?.message?.content ?? "";
   const reasoning = openAIReasoning(message);
+  const hasCarrierData = (message?.reasoning_details ?? []).some(reasoningDetailHasCarrierData);
   const events: Array<
     | { readonly type: "assistant_message"; readonly payload: EventPayload<"assistant_message"> }
     | { readonly type: "tool_use"; readonly payload: EventPayload<"tool_use"> }
@@ -51,6 +53,39 @@ export function ingestOpenAIResponseEvents(
         provider: "openai",
         ...(response.model !== undefined ? { model: response.model } : {}),
         ...(reasoning.length > 0 ? { reasoning } : {}),
+        ...(hasCarrierData && text.length > 0
+          ? {
+              content: [{
+                type: "text",
+                text,
+                provider_parts: [
+                  providerCarrier({
+                    destination: "openai.chat_completions",
+                    index: 0,
+                    kind: "openai.message_content",
+                    wire: { content: text },
+                    canonicalRefs: ["payload.content[0]"],
+                  }),
+                ],
+              }],
+            }
+          : {}),
+        ...(hasCarrierData && message !== undefined
+          ? {
+              provider_items: [
+                providerCarrier({
+                  destination: "openai.chat_completions",
+                  index: 0,
+                  kind: "openai.chat_message",
+                  wire: message,
+                  canonicalRefs: [
+                    ...(text.length > 0 ? ["payload.content[0]"] : []),
+                    "payload.reasoning[0]",
+                  ],
+                }),
+              ],
+            }
+          : {}),
       },
     },
   ];
@@ -77,7 +112,27 @@ function openAIReasoning(message: OpenAIMessage | undefined): readonly Record<st
   const details = message?.reasoning_details ?? [];
   return details
     .filter((item) => typeof item.text === "string")
-    .map((item) => ({ type: "text", text: item.text ?? "" }));
+    .map((item, index) => ({
+      type: "text",
+      text: item.text ?? "",
+      ...(reasoningDetailHasCarrierData(item)
+        ? {
+            provider_parts: [
+              providerCarrier({
+                destination: "openai.chat_completions",
+                index,
+                kind: "openai.reasoning_detail",
+                wire: item,
+                canonicalRefs: [`payload.reasoning[${index}]`],
+              }),
+            ],
+          }
+        : {}),
+    }));
+}
+
+function reasoningDetailHasCarrierData(detail: Record<string, unknown>): boolean {
+  return Object.keys(detail).some((key) => !["type", "text", "reasoning", "content"].includes(key));
 }
 
 function parseArguments(raw: string | undefined): Record<string, unknown> {
