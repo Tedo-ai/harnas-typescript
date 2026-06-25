@@ -20,10 +20,17 @@ describe("carrier assistant message serialization", () => {
   };
 
   it("retains content and numeric integers for a reasoning payload", () => {
-    const [assistant] = ingestAnthropicResponseEvents(response);
+    const event = ingestAnthropicResponseEvents(response)[0];
+    if (event === undefined || event.type !== "assistant_message") {
+      throw new Error("expected an assistant_message event");
+    }
+
     const log = new Log();
-    log.append("assistant_message", assistant.payload);
-    const [serialized] = log.serializableEvents();
+    log.append("assistant_message", event.payload);
+    const serialized = log.serializableEvents()[0];
+    if (serialized === undefined) {
+      throw new Error("expected a serialized event");
+    }
     const payload = serialized.payload as Record<string, unknown>;
 
     expect(payload.content).toBeDefined();
