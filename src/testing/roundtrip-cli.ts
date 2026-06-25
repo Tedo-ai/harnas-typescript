@@ -119,18 +119,10 @@ async function saveRoundTripJsonl(session: Session, path: string): Promise<void>
       id: "",
       timestamp: event.timestamp,
       type: event.type,
-      payload: roundTripPayload(event.payload),
+      payload: event.payload,
     })),
   ];
   await writeFile(path, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
-}
-
-function roundTripPayload(payload: unknown): unknown {
-  if (!isRecord(payload) || !("content" in payload) || typeof payload.text !== "string") {
-    return payload;
-  }
-  const { content: _content, ...rest } = payload;
-  return rest;
 }
 
 function projectExpectedPayload(actual: unknown, expected: unknown): unknown {
