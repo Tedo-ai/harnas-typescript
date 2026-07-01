@@ -16,6 +16,8 @@ import { ingestOpenAIResponseEvents } from "../ingestors/openai.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { newSessionId } from "../core/ids.js";
 import type { LogEvent } from "../core/events.js";
+import type { ObservationBus } from "../core/observation-bus.js";
+import { isStreamDeltaEvent, type StreamEvent, type StreamEventSink } from "../core/streaming.js";
 
 export interface ScriptedProvider {
   next(request: unknown): Promise<unknown>;
@@ -39,6 +41,10 @@ export interface AgentLoopOptions {
   readonly hookHandlers?: ReadonlyMap<string, HookHandler>;
   readonly fixturePath?: string;
   readonly streaming?: boolean;
+  /** Observation bus for §15 streaming transport deltas (Observation-only). */
+  readonly observation?: ObservationBus;
+  /** Direct sink for §15 delta events — e.g. a chat UI rendering tokens live. */
+  readonly onStreamEvent?: StreamEventSink;
 }
 
 export class AgentLoop {
@@ -49,6 +55,8 @@ export class AgentLoop {
   readonly #hookHandlers: ReadonlyMap<string, HookHandler>;
   readonly #fixturePath: string | undefined;
   readonly #streaming: boolean;
+  readonly #observation: ObservationBus | undefined;
+  readonly #onStreamEvent: StreamEventSink | undefined;
   #providerCalls = 0;
 
   constructor(options: AgentLoopOptions) {
@@ -59,6 +67,8 @@ export class AgentLoop {
     this.#hookHandlers = options.hookHandlers ?? new Map();
     this.#fixturePath = options.fixturePath;
     this.#streaming = options.streaming ?? false;
+    this.#observation = options.observation;
+    this.#onStreamEvent = options.onStreamEvent;
   }
 
   async runAfterInput(): Promise<void> {
@@ -177,6 +187,13 @@ export class AgentLoop {
         return;
       }
       if (!isRecord(item) || typeof item.type !== "string" || !isRecord(item.payload)) {
+        continue;
+      }
+      if (isStreamDeltaEvent(item.type)) {
+        // §15 transport deltas are Observation-only — never appended to the Log.
+        const streamEvent: StreamEvent = { type: item.type, payload: item.payload };
+        this.#observation?.emit("stream_event", streamEvent);
+        this.#onStreamEvent?.(streamEvent);
         continue;
       }
       if (item.type === "assistant_message") {
