@@ -28,6 +28,10 @@ export type { Observation, ObservationSubscriber } from "./core/observation-bus.
 export { ConformanceError, HarnasError, ManifestError, ProviderError } from "./core/errors.js";
 export { buildRuntime } from "./runtime/build.js";
 export type { Runtime, RuntimeBuildOptions } from "./runtime/build.js";
+export { OpenAIProvider } from "./providers/openai.js";
+export type { OpenAIProviderOptions } from "./providers/openai.js";
+export { runtimeProvider } from "./providers/runtime.js";
+export type { CompletionProvider, RuntimeProvider } from "./providers/runtime.js";
 export { projectOpenAIRequest } from "./projections/provider/openai.js";
 export { projectAnthropicRequest } from "./projections/provider/anthropic.js";
 export { projectGeminiRequest } from "./projections/provider/gemini.js";
