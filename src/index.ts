@@ -24,6 +24,8 @@ export type { SessionOpenOptions } from "./core/session.js";
 export type { SessionSnapshot, StorageAdapter } from "./storage/storage-adapter.js";
 export { FileStorageAdapter, MemoryStorageAdapter, StorageConflictError } from "./storage/index.js";
 export { ObservationBus } from "./core/observation-bus.js";
+export { STREAM_DELTA_EVENT_TYPES, isStreamDeltaEvent } from "./core/streaming.js";
+export type { StreamDeltaEventType, StreamEvent, StreamEventSink } from "./core/streaming.js";
 export type { Observation, ObservationSubscriber } from "./core/observation-bus.js";
 export { ConformanceError, HarnasError, ManifestError, ProviderError } from "./core/errors.js";
 export { buildRuntime } from "./runtime/build.js";

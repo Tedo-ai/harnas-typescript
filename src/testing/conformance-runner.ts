@@ -2,6 +2,8 @@ import { access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ConformanceError } from "../core/errors.js";
 import { readJsonFile, readJsonlFile, canonicalJson } from "../core/json.js";
+import type { StreamEvent, StreamEventSink } from "../core/streaming.js";
+import type { ObservationBus } from "../core/observation-bus.js";
 import { appendUserMessage, Log } from "../core/log.js";
 import { BashSessionTool } from "../builtins/bash-session.js";
 import { loadSkillBuiltin } from "../builtins/load-skill.js";
@@ -44,6 +46,14 @@ export interface ScriptedSessionOptions {
   readonly fixturePath: string;
   readonly initialSession?: Session;
   readonly streaming?: boolean;
+  readonly onStreamEvent?: StreamEventSink;
+  readonly observation?: ObservationBus;
+}
+
+interface SerializableStreamEvent {
+  readonly index: number;
+  readonly type: string;
+  readonly payload: Record<string, unknown>;
 }
 
 interface FixtureFiles {
@@ -53,6 +63,7 @@ interface FixtureFiles {
   readonly streaming: boolean;
   readonly expectedLog: readonly SerializableLogEvent[];
   readonly expectedProjections?: readonly ProjectionExpectation[];
+  readonly expectedDeltas?: readonly SerializableStreamEvent[];
   readonly staticLog?: readonly SerializableLogEvent[];
   readonly staticSessions?: ReadonlyMap<string, Session>;
   readonly isolation?: {
@@ -86,7 +97,9 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
       assertExpectedProjections(files);
       return { name, passed: true };
     }
-    const session = await runScriptedSession(manifest, files.script, files.inputs, { fixturePath, streaming: files.streaming });
+    const collectedDeltas: StreamEvent[] = [];
+    const onStreamEvent: StreamEventSink = (event) => collectedDeltas.push(event);
+    const session = await runScriptedSession(manifest, files.script, files.inputs, { fixturePath, streaming: files.streaming, onStreamEvent });
     const log = session.log;
 
     const actual = normalizeActualLogForExpected(log.serializableEvents(), files.expectedLog);
@@ -94,6 +107,15 @@ export async function runFixture(fixturePath: string): Promise<FixtureResult> {
       throw new ConformanceError(
         `log mismatch\nactual:   ${canonicalJson(actual)}\nexpected: ${canonicalJson(files.expectedLog)}`,
       );
+    }
+
+    if (files.expectedDeltas !== undefined) {
+      const actualDeltas = collectedDeltas.map((event, index) => ({ index, type: event.type, payload: event.payload }));
+      if (canonicalJson(actualDeltas) !== canonicalJson(files.expectedDeltas)) {
+        throw new ConformanceError(
+          `delta sidecar mismatch\nactual:   ${canonicalJson(actualDeltas)}\nexpected: ${canonicalJson(files.expectedDeltas)}`,
+        );
+      }
     }
     const repeat = files.isolation?.repeat ?? 1;
     for (let index = 1; index < repeat; index += 1) {
@@ -131,6 +153,8 @@ export async function runScriptedSession(
     hookHandlers,
     fixturePath: options.fixturePath,
     ...(options.streaming === undefined ? {} : { streaming: options.streaming }),
+    ...(options.onStreamEvent === undefined ? {} : { onStreamEvent: options.onStreamEvent }),
+    ...(options.observation === undefined ? {} : { observation: options.observation }),
   });
   let loop = makeLoop(session);
 
@@ -431,6 +455,10 @@ async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
   const expectedProjections = await exists(projectionsPath)
     ? await readJsonlFile<ProjectionExpectation>(projectionsPath)
     : undefined;
+  const deltasPath = join(fixturePath, "expected-deltas.jsonl");
+  const expectedDeltas = await exists(deltasPath)
+    ? await readJsonlFile<SerializableStreamEvent>(deltasPath)
+    : undefined;
   const staticSessions = !hasInputs || expectedProjections !== undefined
     ? await readSessionFixtures(sessionsPath)
     : undefined;
@@ -444,6 +472,7 @@ async function loadFixture(fixturePath: string): Promise<FixtureFiles> {
     expectedLog: await readJsonlFile<SerializableLogEvent>(join(fixturePath, "expected-log.jsonl")),
     ...((await exists(isolationPath)) ? { isolation: await readJsonFile<{ readonly repeat?: number }>(isolationPath) } : {}),
     ...(expectedProjections === undefined ? {} : { expectedProjections }),
+    ...(expectedDeltas === undefined ? {} : { expectedDeltas }),
     ...(staticSessions === undefined ? {} : { staticSessions }),
     ...(hasInputs ? {} : { staticLog: sessionLogFromFile(await readSessionFile(join(sessionsPath, "parent.jsonl"))) }),
   };
