@@ -34,6 +34,8 @@ export { OpenAIProvider } from "./providers/openai.js";
 export type { OpenAIProviderOptions } from "./providers/openai.js";
 export { runtimeProvider } from "./providers/runtime.js";
 export type { CompletionProvider, RuntimeProvider } from "./providers/runtime.js";
+export { OpenAIStreamProvider } from "./providers/openai-stream.js";
+export type { OpenAIStreamProviderOptions, StreamProvider } from "./providers/openai-stream.js";
 export { projectOpenAIRequest } from "./projections/provider/openai.js";
 export { projectAnthropicRequest } from "./projections/provider/anthropic.js";
 export { projectGeminiRequest } from "./projections/provider/gemini.js";
