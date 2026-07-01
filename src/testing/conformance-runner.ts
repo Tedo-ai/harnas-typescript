@@ -4,6 +4,7 @@ import { ConformanceError } from "../core/errors.js";
 import { readJsonFile, readJsonlFile, canonicalJson } from "../core/json.js";
 import type { StreamEvent, StreamEventSink } from "../core/streaming.js";
 import type { ObservationBus } from "../core/observation-bus.js";
+import type { StreamProvider } from "../providers/openai-stream.js";
 import { appendUserMessage, Log } from "../core/log.js";
 import { BashSessionTool } from "../builtins/bash-session.js";
 import { loadSkillBuiltin } from "../builtins/load-skill.js";
@@ -48,6 +49,7 @@ export interface ScriptedSessionOptions {
   readonly streaming?: boolean;
   readonly onStreamEvent?: StreamEventSink;
   readonly observation?: ObservationBus;
+  readonly streamProvider?: StreamProvider;
 }
 
 interface SerializableStreamEvent {
@@ -155,6 +157,7 @@ export async function runScriptedSession(
     ...(options.streaming === undefined ? {} : { streaming: options.streaming }),
     ...(options.onStreamEvent === undefined ? {} : { onStreamEvent: options.onStreamEvent }),
     ...(options.observation === undefined ? {} : { observation: options.observation }),
+    ...(options.streamProvider === undefined ? {} : { streamProvider: options.streamProvider }),
   });
   let loop = makeLoop(session);
 

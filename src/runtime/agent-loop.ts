@@ -18,6 +18,7 @@ import { newSessionId } from "../core/ids.js";
 import type { LogEvent } from "../core/events.js";
 import type { ObservationBus } from "../core/observation-bus.js";
 import { isStreamDeltaEvent, type StreamEvent, type StreamEventSink } from "../core/streaming.js";
+import type { StreamProvider } from "../providers/openai-stream.js";
 
 export interface ScriptedProvider {
   next(request: unknown): Promise<unknown>;
@@ -45,6 +46,8 @@ export interface AgentLoopOptions {
   readonly observation?: ObservationBus;
   /** Direct sink for §15 delta events — e.g. a chat UI rendering tokens live. */
   readonly onStreamEvent?: StreamEventSink;
+  /** Live SSE provider; when set, the loop streams and emits §15 deltas live. */
+  readonly streamProvider?: StreamProvider;
 }
 
 export class AgentLoop {
@@ -57,6 +60,7 @@ export class AgentLoop {
   readonly #streaming: boolean;
   readonly #observation: ObservationBus | undefined;
   readonly #onStreamEvent: StreamEventSink | undefined;
+  readonly #streamProvider: StreamProvider | undefined;
   #providerCalls = 0;
 
   constructor(options: AgentLoopOptions) {
@@ -69,6 +73,15 @@ export class AgentLoop {
     this.#streaming = options.streaming ?? false;
     this.#observation = options.observation;
     this.#onStreamEvent = options.onStreamEvent;
+    this.#streamProvider = options.streamProvider;
+  }
+
+  // Sink that fans a live §15 delta out to the Observation bus + direct sink.
+  #deltaSink(): StreamEventSink {
+    return (event) => {
+      this.#observation?.emit("stream_event", event);
+      this.#onStreamEvent?.(event);
+    };
   }
 
   async runAfterInput(): Promise<void> {
@@ -85,7 +98,11 @@ export class AgentLoop {
       if (!this.#invokeHooks("post_projection", { log: this.#log, request })) {
         return;
       }
-      const response = await this.#provider.next(request);
+      // Live streaming provider: emits §15 deltas via the sink as SSE arrives,
+      // then resolves to the consolidated events #appendStreamEvents logs.
+      const response = this.#streamProvider !== undefined
+        ? await this.#streamProvider.stream(request, this.#deltaSink())
+        : await this.#provider.next(request);
       this.#providerCalls += 1;
 
       if (isProviderErrorResponse(response)) {
@@ -97,7 +114,7 @@ export class AgentLoop {
         return;
       }
 
-      if (this.#streaming) {
+      if (this.#streaming || this.#streamProvider !== undefined) {
         await this.#appendStreamEvents(response);
         const last = this.#log.events().at(-1);
         if (last?.event_type !== "tool_result") {
