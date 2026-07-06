@@ -174,6 +174,22 @@ export interface AgentResultEvent {
   readonly payload: Record<string, unknown>;
 }
 
+export interface ApprovalRequestedEvent {
+  readonly seq: number;
+  readonly id: EventId;
+  readonly timestamp: string;
+  readonly event_type: "approval_requested";
+  readonly payload: Record<string, unknown>;
+}
+
+export interface ApprovalResolvedEvent {
+  readonly seq: number;
+  readonly id: EventId;
+  readonly timestamp: string;
+  readonly event_type: "approval_resolved";
+  readonly payload: Record<string, unknown>;
+}
+
 export type LogEvent =
   | UserMessageEvent
   | AssistantMessageEvent
@@ -186,7 +202,9 @@ export type LogEvent =
   | RevertEvent
   | AgentSpawnEvent
   | AgentStatusEvent
-  | AgentResultEvent;
+  | AgentResultEvent
+  | ApprovalRequestedEvent
+  | ApprovalResolvedEvent;
 
 export type EventType = LogEvent["event_type"];
 

@@ -62,6 +62,7 @@ export class AgentLoop {
   readonly #onStreamEvent: StreamEventSink | undefined;
   readonly #streamProvider: StreamProvider | undefined;
   #providerCalls = 0;
+  #awaitingApproval = false;
 
   constructor(options: AgentLoopOptions) {
     this.#manifest = options.manifest;
@@ -116,6 +117,9 @@ export class AgentLoop {
 
       if (this.#streaming || this.#streamProvider !== undefined) {
         await this.#appendStreamEvents(response);
+        if (this.#awaitingApproval) {
+          return;
+        }
         const last = this.#log.events().at(-1);
         if (last?.event_type !== "tool_result") {
           return;
@@ -126,6 +130,7 @@ export class AgentLoop {
       const events = this.#ingestResponse(response);
       let sawToolUse = false;
       let stopReason: unknown;
+      const toolUses: EventPayload<"tool_use">[] = [];
       for (const event of events) {
         const payload = event.type === "assistant_message" ? this.#stampAssistantPayload(event.payload) : event.payload;
         const appended = this.#log.append(event.type, payload as never);
@@ -133,8 +138,24 @@ export class AgentLoop {
           stopReason = appended.payload.stop_reason;
         } else if (appended.event_type === "tool_use") {
           sawToolUse = true;
-          await this.#dispatchTool(appended.payload);
+          toolUses.push(appended.payload);
         }
+      }
+      // Two-pass dispatch (spec 07-permission R7-R8): any pending_approval
+      // hold (on a tool_use not already refused) pauses the batch atomically —
+      // no tool_use executes, only approval_requested events are appended.
+      const held = toolUses.filter((payload) => this.#approvalHold(payload) !== undefined);
+      if (held.length > 0) {
+        for (const payload of held) {
+          this.#appendApprovalRequest(payload);
+        }
+        return;
+      }
+      for (const payload of toolUses) {
+        await this.#dispatchTool(payload);
+      }
+      if (this.#awaitingApproval) {
+        return;
       }
 
       if (!sawToolUse && stopReason !== "tool_use") {
@@ -225,7 +246,13 @@ export class AgentLoop {
     }
   }
 
+  /** Streaming-path backstop for the approval hold; the buffered path pauses
+   * the batch before dispatch (see runAfterInput). */
   async #dispatchTool(payload: EventPayload<"tool_use">): Promise<void> {
+    if (this.#approvalHold(payload) !== undefined) {
+      this.#appendApprovalRequest(payload);
+      return;
+    }
     if (payload.name === "spawn_agent") {
       this.#dispatchSpawnAgent(payload);
       return;
@@ -291,6 +318,86 @@ export class AgentLoop {
       output: `spawned child session ${childSessionId}`,
       error: null,
     });
+  }
+
+  /** RequireApproval hold (spec 07-permission R7): composition per tool_use
+   * is Refuse > RequestApproval > Allow — a hard refusal wins over the hold. */
+  #approvalHold(payload: EventPayload<"tool_use">): { readonly reason: string } | undefined {
+    const config = strategyConfig(this.#manifest, "Permission::RequireApproval");
+    const names = Array.isArray(config?.names) ? config.names.map(String) : [];
+    if (!names.includes(payload.name)) {
+      return undefined;
+    }
+    if (this.#preToolUseRefusal(payload) !== undefined) {
+      return undefined;
+    }
+    return { reason: `tool "${payload.name}" requires approval` };
+  }
+
+  #appendApprovalRequest(payload: EventPayload<"tool_use">): void {
+    const hold = this.#approvalHold(payload);
+    this.#log.append("approval_requested", {
+      tool_use_id: payload.id,
+      reason: hold?.reason ?? null,
+      requested_by: "Permission::RequireApproval",
+    });
+    this.#awaitingApproval = true;
+  }
+
+  /** Resolve a pending approval (spec 07-permission R9). On approve, executes
+   * exactly that tool_use exactly once — bypassing pre_tool_use, the decision
+   * was resolved by the host — and appends its ordinary tool_result. On deny,
+   * appends the synthesized rejection tool_result with the approval envelope.
+   * Call BEFORE re-entering runAfterInput so the next provider call sees a
+   * valid assistant -> tool_result pairing. */
+  async resolveApproval(args: {
+    readonly toolUseId: string;
+    readonly approve: boolean;
+    readonly reason?: string;
+    readonly resolvedBy?: string;
+  }): Promise<void> {
+    const events = this.#log.events();
+    const toolUse = events.find(
+      (event) => event.event_type === "tool_use" && event.payload.id === args.toolUseId,
+    );
+    if (toolUse?.event_type !== "tool_use") {
+      throw new Error(`no tool_use with id ${JSON.stringify(args.toolUseId)} in the session log`);
+    }
+    const fulfilled = events.some(
+      (event) => event.event_type === "tool_result" && event.payload.tool_use_id === args.toolUseId,
+    );
+    if (fulfilled) {
+      throw new Error(
+        `tool_use ${JSON.stringify(args.toolUseId)} already has a tool_result; approvals resolve exactly once`,
+      );
+    }
+    this.#log.append("approval_resolved", {
+      tool_use_id: args.toolUseId,
+      decision: args.approve ? "approved" : "denied",
+      reason: args.reason ?? null,
+      resolved_by: args.resolvedBy ?? null,
+    });
+    if (args.approve) {
+      const output = await this.#tools.dispatch(toolUse.payload.name, toolUse.payload.arguments);
+      this.#log.append("tool_result", {
+        tool_use_id: args.toolUseId,
+        output,
+        error: null,
+      });
+    } else {
+      const reason = args.reason ?? "";
+      this.#log.append("tool_result", {
+        tool_use_id: args.toolUseId,
+        output: null,
+        error: `denied by approval: ${reason}`,
+        approval: {
+          decision: "rejected",
+          rule_matched: reason,
+          applied_diff: null,
+        },
+      });
+    }
+    this.#awaitingApproval = false;
   }
 
   #preToolUseRefusal(payload: EventPayload<"tool_use">): EventPayload<"tool_result"> | undefined {
