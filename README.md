@@ -3,7 +3,7 @@
 TypeScript reference implementation of [Harnas](https://github.com/Tedo-ai/harnas).
 
 **Version 0.2.0** is a conforming TypeScript implementation tracking
-Harnas spec 0.20.1. It keeps the
+Harnas spec 0.21.0 It keeps the
 strict TypeScript package scaffold, JSONL Session persistence,
 manifest-schema validation, observation bus, provider projections, ingestors,
 and a strict conformance runner for `@tedo-ai/harnas-typescript`.
@@ -62,7 +62,7 @@ const newEvents = await session.eventsSince(0);
 
 ## Status
 
-- Current runtime conformance: 75/75 fixtures locally against the current
+- Current runtime conformance: 78/78 fixtures locally against the current
   spec checkout. The runner is strict, MarkerTail compaction is
   tool-pair-safe, manifest hooks dispatch through registered handlers, and
   `Session.fork(at_seq)` rewinds the Log instead of passing vacuously.
