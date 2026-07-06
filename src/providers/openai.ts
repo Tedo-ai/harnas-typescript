@@ -1,6 +1,6 @@
 import type { OpenAIRequest } from "../projections/provider/openai.js";
 import type { OpenAIResponse } from "../ingestors/openai.js";
-import { ProviderError } from "../core/errors.js";
+import { classifyProviderStatus, ProviderError } from "../core/errors.js";
 
 export interface OpenAIProviderOptions {
   readonly apiKey?: string;
@@ -34,8 +34,28 @@ export class OpenAIProvider {
 
     const response = await this.#fetch(`${this.#baseUrl}/chat/completions`, init);
     if (!response.ok) {
-      throw new ProviderError(`OpenAI provider returned HTTP ${response.status}`);
+      const detail = await bodyExcerpt(response);
+      throw new ProviderError(
+        `OpenAI provider returned HTTP ${response.status}${detail === undefined ? "" : `: ${detail}`}`,
+        {
+          status: response.status,
+          ...(detail === undefined ? {} : { detail }),
+          errorClass: classifyProviderStatus(response.status),
+        },
+      );
     }
     return (await response.json()) as OpenAIResponse;
+  }
+}
+
+async function bodyExcerpt(response: Response): Promise<string | undefined> {
+  try {
+    const text = (await response.text()).trim();
+    if (text.length === 0) {
+      return undefined;
+    }
+    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+  } catch {
+    return undefined;
   }
 }

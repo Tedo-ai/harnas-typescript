@@ -1,4 +1,4 @@
-import { ProviderError } from "../core/errors.js";
+import { classifyProviderStatus, ProviderError } from "../core/errors.js";
 import type { StreamDeltaEventType, StreamEventSink } from "../core/streaming.js";
 
 /**
@@ -67,11 +67,21 @@ export class OpenAIStreamProvider implements StreamProvider {
       });
     } catch (error) {
       state.fail(error);
-      throw new ProviderError(`OpenAI stream request failed: ${String(error)}`);
+      throw new ProviderError(`OpenAI stream request failed: ${String(error)}`, {
+        errorClass: "network",
+      });
     }
     if (!response.ok || response.body === null) {
+      const detail = await providerBodyExcerpt(response);
       state.fail(new Error(`HTTP ${response.status}`));
-      throw new ProviderError(`OpenAI stream returned HTTP ${response.status}`);
+      throw new ProviderError(
+        `OpenAI stream returned HTTP ${response.status}${detail === undefined ? "" : `: ${detail}`}`,
+        {
+          status: response.status,
+          ...(detail === undefined ? {} : { detail }),
+          errorClass: classifyProviderStatus(response.status),
+        },
+      );
     }
 
     const reader = response.body.getReader();
@@ -113,6 +123,7 @@ class OpenAIStreamState {
   readonly #emit: StreamEventSink;
   #started = false;
   #text = "";
+  #reasoning = "";
   readonly #tools = new Map<number, ToolAccumulator>();
   #finishReason = "stop";
   #usage: Record<string, unknown> | undefined;
@@ -168,7 +179,18 @@ class OpenAIStreamState {
     });
 
     const consolidated: unknown[] = [
-      { type: "assistant_message", payload: { text: this.#text, stop_reason: stopReason, usage } },
+      {
+        type: "assistant_message",
+        payload: {
+          text: this.#text,
+          stop_reason: stopReason,
+          usage,
+          // Reasoning capture over the OpenAI-compatible wire: mirror the
+          // buffered ingestor's shape so reasoning round-trips instead of
+          // being dropped mid-stream. (Tedo-ai/harnas-typescript#16)
+          ...(this.#reasoning.length > 0 ? { reasoning: [{ type: "text", text: this.#reasoning }] } : {}),
+        },
+      },
     ];
     for (const tool of this.#tools.values()) {
       consolidated.push({
@@ -191,6 +213,11 @@ class OpenAIStreamState {
     if (typeof delta.content === "string" && delta.content.length > 0) {
       this.#text += delta.content;
       this.#emitDelta("assistant_text_delta", { turn_id: this.#turnId, chunk: delta.content });
+    }
+    // Reasoning models over the OpenAI-compatible wire (e.g. via OpenRouter)
+    // stream reasoning as delta.reasoning; accumulate rather than drop it.
+    if (typeof delta.reasoning === "string" && delta.reasoning.length > 0) {
+      this.#reasoning += delta.reasoning;
     }
     if (Array.isArray(delta.tool_calls)) {
       for (const rawCall of delta.tool_calls) {
@@ -272,5 +299,28 @@ function normalizeStreamUsage(usage: Record<string, unknown> | undefined): Recor
   if (typeof usage.completion_tokens === "number") {
     out.output_tokens = usage.completion_tokens;
   }
+  // Preserve the detail objects so core normalizeUsage can lift
+  // reasoning_tokens / cached_tokens — reasoning models can spend their whole
+  // completion budget on reasoning, and "empty because it reasoned" must be
+  // diagnosable from usage. (Tedo-ai/harnas-typescript#16)
+  if (isRecord(usage.completion_tokens_details)) {
+    out.completion_tokens_details = usage.completion_tokens_details;
+  }
+  if (isRecord(usage.prompt_tokens_details)) {
+    out.prompt_tokens_details = usage.prompt_tokens_details;
+  }
   return out;
+}
+
+/** Read a failed response's body for diagnostics, bounded and non-throwing. */
+async function providerBodyExcerpt(response: Response): Promise<string | undefined> {
+  try {
+    const text = (await response.text()).trim();
+    if (text.length === 0) {
+      return undefined;
+    }
+    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+  } catch {
+    return undefined;
+  }
 }
