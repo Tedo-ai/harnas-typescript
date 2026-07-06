@@ -162,6 +162,18 @@ export async function runScriptedSession(
   let loop = makeLoop(session);
 
   for (const input of inputs) {
+    if (isRecord(input) && (isRecord(input.approve) || isRecord(input.deny))) {
+      const approve = isRecord(input.approve);
+      const spec = (approve ? input.approve : input.deny) as Record<string, unknown>;
+      await loop.resolveApproval({
+        toolUseId: String(spec.tool_use_id),
+        approve,
+        ...(typeof spec.reason === "string" ? { reason: spec.reason } : {}),
+        ...(typeof spec.resolved_by === "string" ? { resolvedBy: spec.resolved_by } : {}),
+      });
+      await loop.runAfterInput();
+      continue;
+    }
     const result = appendInput(session, input);
     if (result.session !== session) {
       loop = makeLoop(result.session);
