@@ -1,6 +1,6 @@
 import type { Log } from "../../core/log.js";
 import type { ProjectionOptions, ProviderManifest } from "./common.js";
-import { contentBlocksForAnthropic, hasOnlyText, projectionEvents, textTurns } from "./common.js";
+import { contentBlocksForAnthropic, hasOnlyText, projectionEvents, textTurns , applyTrailingAssistantPolicy} from "./common.js";
 import type { ProjectionEvent } from "./common.js";
 import type { ToolUseEvent } from "../../core/events.js";
 import { messageText } from "../../core/events.js";
@@ -24,9 +24,16 @@ export interface AnthropicRequest {
 }
 
 export function projectAnthropicRequest(manifest: ProviderManifest, log: Log, options: ProjectionOptions = {}): AnthropicRequest {
+  const messages = anthropicTurns(log, options);
+  applyTrailingAssistantPolicy(
+    messages as { role: string }[],
+    options.onTrailingAssistant,
+    (message) => message.role === "assistant",
+    (text) => ({ role: "user", content: text }) as never,
+  );
   return {
     model: manifest.provider.model,
-    messages: anthropicTurns(log, options),
+    messages,
     ...(manifest.provider.max_tokens !== undefined ? { max_tokens: manifest.provider.max_tokens } : {}),
     ...(manifest.system !== undefined && manifest.system.length > 0 ? { system: manifest.system } : {}),
     ...((manifest.tools ?? []).length > 0 ? { tools: anthropicTools(manifest) } : {}),

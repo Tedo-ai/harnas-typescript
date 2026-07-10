@@ -4,6 +4,27 @@
 
 ### Added
 
+- `@tedo-ai/harnas-typescript/wire`: a light entry point exporting only the
+  pure payload/event/stream types and functions (`userMessagePayload`,
+  `messageText`, `normalizeMessagePayload`, `normalizeUsage`,
+  `classifyProviderStatus`, `ProviderError`, and the wire types), with a
+  transitive import graph free of Node built-ins — so lazy-loading consumers
+  never hand-copy Harnas payload shapes. `userMessagePayload` is also exported
+  from the root. (#18)
+- `userMessagePayload(text)`: canonical user_message payload constructor;
+  `appendUserMessage` now routes through it (single source of the shape). The
+  payload contract is documented — `content` is authoritative, top-level
+  `text` is a derived convenience. (#20)
+- `ProjectionOptions.onTrailingAssistant` (`"allow" | "error" | { appendUser }`)
+  on all three projections: a Log ending on an assistant turn projects to
+  prefill semantics that current Claude models reject; the option lets the
+  invariant live in the projection instead of every call site. Default
+  `"allow"` (backward compatible). (#19)
+
+## [Unreleased]
+
+### Added
+
 - Added v0.20 durability primitives: harnas-jcs-v1 canonicalization with a
   BigInt-safe parser, Event `content_hash`, and the OCC `expected_next_seq`
   append fence on storage adapters.

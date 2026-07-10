@@ -1,6 +1,6 @@
 import type { Log } from "../../core/log.js";
 import type { ProjectionOptions, ProviderManifest } from "./common.js";
-import { hasOnlyText, projectionEvents } from "./common.js";
+import { hasOnlyText, projectionEvents , applyTrailingAssistantPolicy} from "./common.js";
 import { messageText } from "../../core/events.js";
 import type { MessagePayload } from "../../core/events.js";
 import { providerPartWire } from "../../provider-carriers.js";
@@ -67,6 +67,12 @@ export function projectGeminiRequest(manifest: ProviderManifest, log: Log, optio
       });
     }
   }
+  applyTrailingAssistantPolicy(
+    contents,
+    options.onTrailingAssistant,
+    (message) => message.role === "model",
+    (text) => ({ role: "user" as const, parts: [{ text }] }),
+  );
   return {
     model: manifest.provider.model,
     contents,

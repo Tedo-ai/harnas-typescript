@@ -3,6 +3,7 @@ import type { ContentBlock, DocumentContentBlock, ImageContentBlock, MessagePayl
 import { messageText } from "../../core/events.js";
 import type { LogEvent } from "../../core/events.js";
 import { providerPartWire } from "../../provider-carriers.js";
+import { ProviderError } from "../../core/errors.js";
 import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,8 +26,55 @@ export interface ProviderManifest {
   }[];
 }
 
+/**
+ * Policy for a Log that ends on an assistant turn. Such a Log projects to a
+ * request whose last message is an assistant message — i.e. *prefill*
+ * semantics — which current Claude models reject (HTTP 400 "does not support
+ * assistant prefill") and Gemini may answer with empty text. Task-style calls
+ * (panel closers, summarizers, judges) that reuse an existing Log hit this.
+ *
+ * - `"allow"` (default): project as-is (backward compatible).
+ * - `"error"`: throw a `ProviderError` before the request is built.
+ * - `{ appendUser }`: append a trailing user message with the given text so
+ *   the request closes on a user turn.
+ *
+ * (Tedo-ai/harnas-typescript#19; the invariant is documented in spec §20.)
+ */
+export type TrailingAssistantPolicy = "allow" | "error" | { readonly appendUser: string };
+
 export interface ProjectionOptions {
   readonly fixturePath?: string;
+  readonly onTrailingAssistant?: TrailingAssistantPolicy;
+}
+
+/**
+ * Apply the trailing-assistant policy to a built message list. `isAssistant`
+ * reads the provider-specific role of the last message; `makeUserMessage`
+ * builds a provider-specific trailing user message. Mutates and returns the
+ * list for `{ appendUser }`, throws for `"error"`, is a no-op for `"allow"`.
+ */
+export function applyTrailingAssistantPolicy<M>(
+  messages: M[],
+  policy: TrailingAssistantPolicy | undefined,
+  isAssistant: (message: M) => boolean,
+  makeUserMessage: (text: string) => M,
+): M[] {
+  if (policy === undefined || policy === "allow") {
+    return messages;
+  }
+  const last = messages.at(-1);
+  if (last === undefined || !isAssistant(last)) {
+    return messages;
+  }
+  if (policy === "error") {
+    throw new ProviderError(
+      "projected Log ends on an assistant message (prefill semantics); " +
+        "close task-style calls with a user-side event (see spec §20)",
+      { errorClass: "invalid_request" },
+    );
+  }
+  messages.push(makeUserMessage(policy.appendUser));
+  return messages;
 }
 
 export type ProjectionEvent = LogEvent | {

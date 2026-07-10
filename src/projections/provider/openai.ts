@@ -1,7 +1,7 @@
 import type { Log } from "../../core/log.js";
 import type { ProjectionOptions, ProviderManifest } from "./common.js";
 import { messageText } from "../../core/events.js";
-import { contentBlocksForOpenAI, hasOnlyText, projectionEvents } from "./common.js";
+import { applyTrailingAssistantPolicy, contentBlocksForOpenAI, hasOnlyText, projectionEvents } from "./common.js";
 import { canonicalJson } from "../../core/json.js";
 import { carrierWire } from "../../provider-carriers.js";
 
@@ -85,6 +85,12 @@ export function projectOpenAIRequest(manifest: ProviderManifest, log: Log, optio
     }
   }
 
+  applyTrailingAssistantPolicy(
+    messages,
+    options.onTrailingAssistant,
+    (message) => message.role === "assistant",
+    (text): OpenAIMessage => ({ role: "user", content: text }),
+  );
   const request: OpenAIRequest = {
     model: manifest.provider.model,
     messages,

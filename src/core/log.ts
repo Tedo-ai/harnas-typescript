@@ -1,7 +1,7 @@
 import { newEventId } from "./ids.js";
 import type { EventId } from "./ids.js";
 import type { EventDraft, EventPayload, EventType, LogEvent, SerializableLogEvent } from "./events.js";
-import { normalizeMessagePayload } from "./events.js";
+import { normalizeMessagePayload, userMessagePayload } from "./events.js";
 
 export class Log {
   readonly #events: LogEvent[];
@@ -39,7 +39,7 @@ export class Log {
 }
 
 export function appendUserMessage(log: Log, text: string): void {
-  log.append("user_message", { content: [{ type: "text", text }], text });
+  log.append("user_message", userMessagePayload(text));
 }
 
 export function createLogEvent<TType extends EventType>(

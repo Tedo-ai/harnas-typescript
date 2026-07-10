@@ -13,7 +13,7 @@ export type {
   ToolUseEvent,
   UserMessageEvent,
 } from "./core/events.js";
-export { messageText, normalizeMessagePayload } from "./core/events.js";
+export { messageText, userMessagePayload, normalizeMessagePayload } from "./core/events.js";
 export type { Brand, EventId, SessionId, ToolCallId } from "./core/ids.js";
 export { brand, eventIdForSeq, newEventId, newSessionId } from "./core/ids.js";
 export { canonicalizeJCSV1JSON, contentHashForEventRowJSON, InvalidUnicodeError } from "./core/jcs.js";

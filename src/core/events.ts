@@ -256,6 +256,24 @@ export function messageText(payload: MessagePayload): string {
     .join("");
 }
 
+/**
+ * Construct a canonical user_message payload.
+ *
+ * **Payload contract (Tedo-ai/harnas-typescript#20).** `content` is the
+ * authoritative field: an ordered list of content blocks, and what
+ * projections read for multimodal turns. The top-level `text` is a *derived
+ * convenience* for the common single-text-block case — `messageText` prefers
+ * it, and the simple-message wire shape still serializes as bare `{ text }`
+ * for compatibility. Consumers building multimodal turns SHOULD pass
+ * `content` only; if both are present they MUST agree (`text` equals the
+ * concatenated text blocks). Writing `text` alone is the legacy shape and
+ * stays readable. Prefer this constructor over hand-writing the payload so
+ * the shape lives in one place.
+ */
+export function userMessagePayload(text: string): MessagePayload {
+  return { content: [{ type: "text", text }], text };
+}
+
 export interface SessionHeader {
   readonly session_id: SessionId;
   readonly harnas_version?: string;
