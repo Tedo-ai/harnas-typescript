@@ -20,8 +20,8 @@
 - Built-in stream adapters now fail closed on provider error frames,
   malformed JSON or UTF-8, invalid tool lifecycles, duplicate or missing
   terminal evidence, and partial failures without producing durable results.
-- Added 39/39 raw provider-wire executions for the forthcoming v0.22 corpus,
-  while the published agent-fixture target remains v0.21.0.
+- Updated the conformance target to fixtures v0.22.0: 78/78 agent fixtures
+  plus 39/39 raw provider-wire executions.
 - Updated the conformance target to fixtures v0.20.0: 75/75.
 - Reset the conformance runner to the strict runtime path: scripted provider
   turns now execute through `AgentLoop`, `ToolRegistry`, provider projections,

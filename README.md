@@ -3,7 +3,7 @@
 TypeScript reference implementation of [Harnas](https://github.com/Tedo-ai/harnas).
 
 **Version 0.2.0** is a conforming TypeScript implementation tracking
-Harnas spec 0.21.0. It keeps the
+Harnas spec 0.22.0. It keeps the
 strict TypeScript package scaffold, JSONL Session persistence,
 manifest-schema validation, observation bus, provider projections, ingestors,
 and a strict conformance runner for `@tedo-ai/harnas-typescript`.
