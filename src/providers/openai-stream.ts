@@ -1,5 +1,21 @@
-import { classifyProviderStatus, ProviderError } from "../core/errors.js";
-import type { StreamDeltaEventType, StreamEventSink } from "../core/streaming.js";
+import {
+  classifyProviderStatus,
+  ProviderError,
+  ProviderProtocolError,
+  ProviderStreamError,
+} from "../core/errors.js";
+import type {
+  StreamDeltaEventType,
+  StreamEventSink,
+} from "../core/streaming.js";
+import { normalizeUsage } from "../core/usage.js";
+import {
+  isRecord,
+  parseObjectJSON,
+  parseToolArguments,
+  providerBodyExcerpt,
+  readSSEBody,
+} from "./provider-stream-common.js";
 
 /**
  * A live streaming provider. `stream` opens a real SSE connection, emits §15
@@ -57,57 +73,41 @@ export class OpenAIStreamProvider implements StreamProvider {
     }
 
     const state = new OpenAIStreamState(this.#turnId(), emit);
-    let response: Response;
+    state.start();
     try {
-      response = await this.#fetch(`${this.#baseUrl}/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        ...(options.signal !== undefined ? { signal: options.signal } : {}),
-      });
+      let response: Response;
+      try {
+        response = await this.#fetch(`${this.#baseUrl}/chat/completions`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          ...(options.signal !== undefined ? { signal: options.signal } : {}),
+        });
+      } catch (error) {
+        throw new ProviderError(
+          `OpenAI stream request failed: ${String(error)}`,
+          {
+            errorClass: "network",
+          },
+        );
+      }
+      if (!response.ok) {
+        const detail = await providerBodyExcerpt(response);
+        throw new ProviderError(
+          `OpenAI stream returned HTTP ${response.status}${detail === undefined ? "" : `: ${detail}`}`,
+          {
+            status: response.status,
+            ...(detail === undefined ? {} : { detail }),
+            errorClass: classifyProviderStatus(response.status),
+          },
+        );
+      }
+      await readSSEBody(response, "openai", (data) => state.data(data));
+      return state.finish();
     } catch (error) {
       state.fail(error);
-      throw new ProviderError(`OpenAI stream request failed: ${String(error)}`, {
-        errorClass: "network",
-      });
+      throw error;
     }
-    if (!response.ok || response.body === null) {
-      const detail = await providerBodyExcerpt(response);
-      state.fail(new Error(`HTTP ${response.status}`));
-      throw new ProviderError(
-        `OpenAI stream returned HTTP ${response.status}${detail === undefined ? "" : `: ${detail}`}`,
-        {
-          status: response.status,
-          ...(detail === undefined ? {} : { detail }),
-          errorClass: classifyProviderStatus(response.status),
-        },
-      );
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let newlineIndex: number;
-      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
-        buffer = buffer.slice(newlineIndex + 1);
-        if (!line.startsWith("data:")) {
-          continue; // SSE comments / event: lines are ignored for chat completions
-        }
-        const data = line.slice(5).trim();
-        if (data === "" || data === "[DONE]") {
-          continue;
-        }
-        state.data(data);
-      }
-    }
-    return state.finish();
   }
 }
 
@@ -115,6 +115,7 @@ interface ToolAccumulator {
   id: string;
   name: string;
   args: string;
+  begun: boolean;
 }
 
 /** Parses OpenAI streaming chunks into §15 deltas + a consolidated turn. */
@@ -127,6 +128,8 @@ class OpenAIStreamState {
   readonly #tools = new Map<number, ToolAccumulator>();
   #finishReason = "stop";
   #usage: Record<string, unknown> | undefined;
+  #finishSeen = false;
+  #doneSeen = false;
 
   constructor(turnId: string, emit: StreamEventSink) {
     this.#turnId = turnId;
@@ -134,44 +137,122 @@ class OpenAIStreamState {
   }
 
   data(raw: string): void {
-    let payload: Record<string, unknown>;
-    try {
-      payload = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return; // tolerate a malformed intermediate frame
+    if (raw === "[DONE]") {
+      if (this.#doneSeen) {
+        throw new ProviderProtocolError(
+          "openai",
+          "duplicate_terminal",
+          "duplicate [DONE] sentinel",
+        );
+      }
+      this.#doneSeen = true;
+      return;
+    }
+    if (this.#doneSeen) {
+      throw new ProviderProtocolError(
+        "openai",
+        "invalid_order",
+        "data arrived after [DONE]",
+      );
+    }
+    const payload = parseObjectJSON("openai", raw);
+    if (isRecord(payload.error)) {
+      const errorType =
+        typeof payload.error.type === "string"
+          ? payload.error.type
+          : typeof payload.error.code === "string"
+            ? payload.error.code
+            : "";
+      throw new ProviderStreamError(
+        "openai",
+        errorType,
+        typeof payload.error.message === "string" ? payload.error.message : "",
+        {
+          requestId:
+            typeof payload.request_id === "string" ? payload.request_id : "",
+          status:
+            typeof payload.error.status === "number" ? payload.error.status : 0,
+        },
+      );
     }
     if (isRecord(payload.usage)) {
       this.#usage = payload.usage;
     }
     const choices = payload.choices;
-    const choice = Array.isArray(choices) && isRecord(choices[0]) ? choices[0] : undefined;
+    const choice =
+      Array.isArray(choices) && isRecord(choices[0]) ? choices[0] : undefined;
     if (choice === undefined) {
       return;
     }
     if (isRecord(choice.delta)) {
+      if (this.#finishSeen) {
+        throw new ProviderProtocolError(
+          "openai",
+          "invalid_order",
+          "delta arrived after finish_reason",
+        );
+      }
       this.#handleDelta(choice.delta);
     }
-    if (typeof choice.finish_reason === "string" && choice.finish_reason !== "") {
+    if (
+      typeof choice.finish_reason === "string" &&
+      choice.finish_reason !== ""
+    ) {
+      if (this.#finishSeen) {
+        throw new ProviderProtocolError(
+          "openai",
+          "duplicate_terminal",
+          "duplicate finish_reason",
+        );
+      }
+      this.#finishSeen = true;
       this.#finishReason = choice.finish_reason;
     }
   }
 
-  fail(error: unknown): void {
+  start(): void {
     this.#ensureStarted();
-    this.#emitDelta("assistant_turn_failed", { turn_id: this.#turnId, error: String(error) });
+  }
+
+  fail(error: unknown): void {
+    this.#emitDelta("assistant_turn_failed", {
+      turn_id: this.#turnId,
+      error: String(error),
+    });
   }
 
   finish(): readonly unknown[] {
-    this.#ensureStarted();
+    if (!this.#doneSeen) {
+      throw new ProviderProtocolError(
+        "openai",
+        "missing_terminal",
+        "stream ended before [DONE]",
+      );
+    }
+    if (!this.#finishSeen) {
+      throw new ProviderProtocolError(
+        "openai",
+        "missing_finish_reason",
+        "stream ended without finish_reason",
+      );
+    }
     for (const tool of this.#tools.values()) {
+      if (tool.id === "" || tool.name === "") {
+        throw new ProviderProtocolError(
+          "openai",
+          "invalid_tool",
+          "tool call completed without id and name",
+        );
+      }
       this.#emitDelta("tool_use_end", {
         turn_id: this.#turnId,
         tool_use_id: tool.id,
-        arguments: parseArgs(tool.args),
+        arguments: parseToolArguments("openai", tool.args),
       });
     }
     const usage = normalizeStreamUsage(this.#usage);
-    const stopReason = this.#tools.size > 0 ? "tool_use" : mapFinishReason(this.#finishReason);
+    const stopReason =
+      this.#tools.size > 0 ? "tool_use" : mapFinishReason(this.#finishReason);
     this.#emitDelta("assistant_turn_completed", {
       turn_id: this.#turnId,
       stop_reason: stopReason,
@@ -184,18 +265,24 @@ class OpenAIStreamState {
         payload: {
           text: this.#text,
           stop_reason: stopReason,
-          usage,
+          usage: normalizeUsage(usage),
           // Reasoning capture over the OpenAI-compatible wire: mirror the
           // buffered ingestor's shape so reasoning round-trips instead of
           // being dropped mid-stream. (Tedo-ai/harnas-typescript#16)
-          ...(this.#reasoning.length > 0 ? { reasoning: [{ type: "text", text: this.#reasoning }] } : {}),
+          ...(this.#reasoning.length > 0
+            ? { reasoning: [{ type: "text", text: this.#reasoning }] }
+            : {}),
         },
       },
     ];
     for (const tool of this.#tools.values()) {
       consolidated.push({
         type: "tool_use",
-        payload: { id: tool.id, name: tool.name, arguments: parseArgs(tool.args) },
+        payload: {
+          id: tool.id,
+          name: tool.name,
+          arguments: parseToolArguments("openai", tool.args),
+        },
       });
     }
     return consolidated;
@@ -212,7 +299,10 @@ class OpenAIStreamState {
     this.#ensureStarted();
     if (typeof delta.content === "string" && delta.content.length > 0) {
       this.#text += delta.content;
-      this.#emitDelta("assistant_text_delta", { turn_id: this.#turnId, chunk: delta.content });
+      this.#emitDelta("assistant_text_delta", {
+        turn_id: this.#turnId,
+        chunk: delta.content,
+      });
     }
     // Reasoning models over the OpenAI-compatible wire (e.g. via OpenRouter)
     // stream reasoning as delta.reasoning; accumulate rather than drop it.
@@ -229,12 +319,12 @@ class OpenAIStreamState {
         let tool = this.#tools.get(index);
         if (tool === undefined) {
           tool = {
-            id: typeof rawCall.id === "string" ? rawCall.id : `call_${index}`,
+            id: typeof rawCall.id === "string" ? rawCall.id : "",
             name: typeof fn.name === "string" ? fn.name : "",
             args: "",
+            begun: false,
           };
           this.#tools.set(index, tool);
-          this.#emitDelta("tool_use_begin", { turn_id: this.#turnId, tool_use_id: tool.id, name: tool.name });
         }
         if (typeof rawCall.id === "string" && rawCall.id !== "") {
           tool.id = rawCall.id;
@@ -242,7 +332,22 @@ class OpenAIStreamState {
         if (typeof fn.name === "string" && fn.name !== "") {
           tool.name = fn.name;
         }
+        if (tool.id !== "" && tool.name !== "" && !tool.begun) {
+          tool.begun = true;
+          this.#emitDelta("tool_use_begin", {
+            turn_id: this.#turnId,
+            tool_use_id: tool.id,
+            name: tool.name,
+          });
+        }
         if (typeof fn.arguments === "string" && fn.arguments.length > 0) {
+          if (tool.id === "" || tool.name === "") {
+            throw new ProviderProtocolError(
+              "openai",
+              "invalid_tool",
+              "tool arguments arrived before id and name",
+            );
+          }
           tool.args += fn.arguments;
           this.#emitDelta("tool_use_argument_delta", {
             turn_id: this.#turnId,
@@ -254,13 +359,12 @@ class OpenAIStreamState {
     }
   }
 
-  #emitDelta(type: StreamDeltaEventType, payload: Record<string, unknown>): void {
+  #emitDelta(
+    type: StreamDeltaEventType,
+    payload: Record<string, unknown>,
+  ): void {
     this.#emit({ type, payload });
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function mapFinishReason(reason: string): string {
@@ -276,19 +380,9 @@ function mapFinishReason(reason: string): string {
   }
 }
 
-function parseArgs(args: string): Record<string, unknown> {
-  if (args === "") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(args) as unknown;
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function normalizeStreamUsage(usage: Record<string, unknown> | undefined): Record<string, unknown> {
+function normalizeStreamUsage(
+  usage: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   if (usage === undefined) {
     return {};
   }
@@ -310,17 +404,4 @@ function normalizeStreamUsage(usage: Record<string, unknown> | undefined): Recor
     out.prompt_tokens_details = usage.prompt_tokens_details;
   }
   return out;
-}
-
-/** Read a failed response's body for diagnostics, bounded and non-throwing. */
-async function providerBodyExcerpt(response: Response): Promise<string | undefined> {
-  try {
-    const text = (await response.text()).trim();
-    if (text.length === 0) {
-      return undefined;
-    }
-    return text.length > 300 ? `${text.slice(0, 300)}…` : text;
-  } catch {
-    return undefined;
-  }
 }
