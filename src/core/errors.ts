@@ -39,6 +39,41 @@ export class ProviderError extends HarnasError {
   }
 }
 
+export class ProviderStreamError extends ProviderError {
+  readonly provider: string;
+  readonly providerErrorType: string;
+  readonly requestId: string;
+
+  constructor(
+    provider: string,
+    providerErrorType: string,
+    message: string,
+    options: ProviderErrorOptions & { readonly requestId?: string } = {},
+  ) {
+    const requestId = options.requestId ?? "";
+    super(
+      `${provider} stream error ${providerErrorType}${requestId === "" ? "" : ` (request_id=${requestId})`}: ${message}`,
+      options,
+    );
+    this.provider = provider;
+    this.providerErrorType = providerErrorType;
+    this.requestId = requestId;
+  }
+}
+
+export class ProviderProtocolError extends ProviderError {
+  readonly provider: string;
+  readonly reason: string;
+
+  constructor(provider: string, reason: string, message: string) {
+    super(`${provider} stream protocol error: ${message}`, {
+      errorClass: "provider_error",
+    });
+    this.provider = provider;
+    this.reason = reason;
+  }
+}
+
 /** Map an HTTP status to the coarse ProviderErrorClass. */
 export function classifyProviderStatus(status: number): ProviderErrorClass {
   if (status === 429) return "rate_limit";

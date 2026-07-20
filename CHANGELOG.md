@@ -4,6 +4,11 @@
 
 ### Added
 
+- Raw provider-wire conformance for Anthropic, OpenAI, and Gemini: 18 logical
+  cases and 39 deterministic byte-fragmented executions through production
+  `fetch`/SSE parsers, with a standalone runner.
+- Production Anthropic and Gemini stream adapters alongside the hardened
+  OpenAI stream adapter.
 - Added v0.20 durability primitives: harnas-jcs-v1 canonicalization with a
   BigInt-safe parser, Event `content_hash`, and the OCC `expected_next_seq`
   append fence on storage adapters.
@@ -12,6 +17,11 @@
 
 ### Changed
 
+- Built-in stream adapters now fail closed on provider error frames,
+  malformed JSON or UTF-8, invalid tool lifecycles, duplicate or missing
+  terminal evidence, and partial failures without producing durable results.
+- Added 39/39 raw provider-wire executions for the forthcoming v0.22 corpus,
+  while the published agent-fixture target remains v0.21.0.
 - Updated the conformance target to fixtures v0.20.0: 75/75.
 - Reset the conformance runner to the strict runtime path: scripted provider
   turns now execute through `AgentLoop`, `ToolRegistry`, provider projections,
