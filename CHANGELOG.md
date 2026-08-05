@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- AgentLoop closes complete tool calls emitted under a non-tool stop reason
+  with canonical failure results, invokes zero tools, and stops the current
+  run; the proposed Integrity Core fixture passes.
+
 ### Added
 
 - Raw provider-wire conformance for Anthropic, OpenAI, and Gemini: 18 logical

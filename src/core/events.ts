@@ -2,7 +2,7 @@ import type { EventId, SessionId } from "./ids.js";
 import type { CanonicalUsage } from "./usage.js";
 import type { ProviderCarrier } from "../provider-carriers.js";
 
-export type StopReason = "end_turn" | "tool_use" | "runtime_error";
+export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "other" | "runtime_error";
 
 export type TokenUsage = CanonicalUsage;
 
@@ -99,6 +99,9 @@ export interface ToolResultPayload {
   readonly tool_use_id: string;
   readonly output: string | null;
   readonly error: string | null;
+  readonly error_class?: string;
+  readonly reason?: string;
+  readonly stop_reason?: StopReason;
   readonly approval?: ApprovalMetadata;
 }
 

@@ -1,4 +1,4 @@
-import type { EventPayload } from "../core/events.js";
+import type { EventPayload, StopReason } from "../core/events.js";
 import { normalizeUsage } from "../core/usage.js";
 import { providerCarrier } from "../provider-carriers.js";
 
@@ -13,6 +13,7 @@ interface GeminiPart {
 
 export interface GeminiResponse {
   readonly candidates?: readonly {
+    readonly finishReason?: string;
     readonly content?: {
       readonly parts?: readonly GeminiPart[];
     };
@@ -45,7 +46,7 @@ export function ingestGeminiResponseEvents(
       payload: {
         content: [{ type: "text", text }],
         text,
-        stop_reason: toolCalls.length > 0 ? "tool_use" : "end_turn",
+        stop_reason: geminiStopReason(response.candidates?.[0]?.finishReason, toolCalls.length > 0),
         usage: normalizeUsage(response.usageMetadata),
         provider: "gemini",
         ...(hasCarrierData
@@ -71,6 +72,13 @@ export function ingestGeminiResponseEvents(
     geminiToolCounter += 1;
   }
   return events;
+}
+
+function geminiStopReason(reason: string | undefined, hasToolCalls: boolean): StopReason {
+  if (reason === "MAX_TOKENS") return "max_tokens";
+  if (hasToolCalls) return "tool_use";
+  if (reason === "STOP" || reason === undefined) return "end_turn";
+  return "other";
 }
 
 function contentBlocksWithCarriers(parts: readonly GeminiPart[]): EventPayload<"assistant_message">["content"] {
