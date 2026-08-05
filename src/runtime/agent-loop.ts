@@ -116,8 +116,11 @@ export class AgentLoop {
       }
 
       if (this.#streaming || this.#streamProvider !== undefined) {
-        await this.#appendStreamEvents(response);
+        const disposition = await this.#appendStreamEvents(response);
         if (this.#awaitingApproval) {
+          return;
+        }
+        if (disposition === "incomplete_tool_batch") {
           return;
         }
         const last = this.#log.events().at(-1);
@@ -140,6 +143,10 @@ export class AgentLoop {
           sawToolUse = true;
           toolUses.push(appended.payload);
         }
+      }
+      if (toolUses.length > 0 && stopReason !== "tool_use") {
+        this.#appendIncompleteToolResults(toolUses, stopReason);
+        return;
       }
       // Two-pass dispatch (spec 07-permission R7-R8): any pending_approval
       // hold (on a tool_use not already refused) pauses the batch atomically —
@@ -211,18 +218,20 @@ export class AgentLoop {
     ).length;
   }
 
-  async #appendStreamEvents(response: unknown): Promise<void> {
+  async #appendStreamEvents(response: unknown): Promise<"complete" | "incomplete_tool_batch"> {
     if (!Array.isArray(response)) {
-      return;
+      return "complete";
     }
+    const toolUses: EventPayload<"tool_use">[] = [];
+    let stopReason: unknown;
     for (const item of response) {
       if (isRecord(item) && isRecord(item.error)) {
         this.#log.append("provider_error", providerErrorPayload(item.error, 1, this.#manifest.provider.kind));
-        return;
+        return "complete";
       }
       if (isRecord(item) && isRecord(item.malformed_frame)) {
         this.#log.append("provider_error", providerErrorPayload(item.malformed_frame, 1, this.#manifest.provider.kind));
-        return;
+        return "complete";
       }
       if (!isRecord(item) || typeof item.type !== "string" || !isRecord(item.payload)) {
         continue;
@@ -235,14 +244,42 @@ export class AgentLoop {
         continue;
       }
       if (item.type === "assistant_message") {
-        this.#log.append(
+        const appended = this.#log.append(
           "assistant_message",
           this.#stampAssistantPayload(item.payload as unknown as EventPayload<"assistant_message">),
         );
+        stopReason = appended.payload.stop_reason;
       } else if (item.type === "tool_use") {
         const appended = this.#log.append("tool_use", item.payload as unknown as EventPayload<"tool_use">);
-        await this.#dispatchTool(appended.payload);
+        toolUses.push(appended.payload);
       }
+    }
+    if (toolUses.length > 0 && stopReason !== "tool_use") {
+      this.#appendIncompleteToolResults(toolUses, stopReason);
+      return "incomplete_tool_batch";
+    }
+    for (const toolUse of toolUses) {
+      await this.#dispatchTool(toolUse);
+    }
+    return "complete";
+  }
+
+  #appendIncompleteToolResults(
+    toolUses: readonly EventPayload<"tool_use">[],
+    stopReason: unknown,
+  ): void {
+    const normalizedStopReason = (
+      typeof stopReason === "string" && stopReason !== "" ? stopReason : "other"
+    ) as NonNullable<EventPayload<"tool_result">["stop_reason"]>;
+    for (const toolUse of toolUses) {
+      this.#log.append("tool_result", {
+        tool_use_id: toolUse.id,
+        output: null,
+        error: `tool ${toolUse.name} did not complete: assistant turn ended with stop_reason ${normalizedStopReason} before a tool result was recorded`,
+        error_class: "IncompleteToolResult",
+        reason: "incomplete_tool_result",
+        stop_reason: normalizedStopReason,
+      });
     }
   }
 

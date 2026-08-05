@@ -1,4 +1,4 @@
-import type { EventPayload } from "../core/events.js";
+import type { EventPayload, StopReason } from "../core/events.js";
 import { normalizeUsage } from "../core/usage.js";
 import { providerCarrier } from "../provider-carriers.js";
 
@@ -64,7 +64,7 @@ export function ingestAnthropicResponseEvents(
       payload: ({
         ...(!hasCarrierData || text.length > 0 ? { content: [{ type: "text" as const, text }] } : {}),
         text,
-        stop_reason: response.stop_reason === "tool_use" ? "tool_use" : "end_turn",
+        stop_reason: anthropicStopReason(response.stop_reason),
         usage: normalizeUsage(response.usage),
         provider: "anthropic",
         ...(response.model !== undefined ? { model: response.model } : {}),
@@ -119,4 +119,11 @@ export function ingestAnthropicResponseEvents(
     });
   }
   return events;
+}
+
+function anthropicStopReason(reason: string | null | undefined): StopReason {
+  if (reason === "tool_use") return "tool_use";
+  if (reason === "max_tokens") return "max_tokens";
+  if (reason === "end_turn" || reason === undefined || reason === null) return "end_turn";
+  return "other";
 }

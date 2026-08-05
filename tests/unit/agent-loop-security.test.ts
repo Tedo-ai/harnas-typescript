@@ -8,6 +8,46 @@ import { AgentLoop, type ScriptedProvider } from "../../src/runtime/agent-loop.j
 import { ToolRegistry } from "../../src/tools/registry.js";
 
 describe("AgentLoop sandbox security", () => {
+  it("closes a complete tool call under a non-tool stop without dispatch", async () => {
+    const log = new Log();
+    appendUserMessage(log, "run echo");
+    const provider = new QueueProvider([{
+      model: "gpt-test",
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [{
+            id: "call_truncated",
+            function: { name: "echo", arguments: "{}" },
+          }],
+        },
+        finish_reason: "length",
+      }],
+    }]);
+    const registry = new ToolRegistry();
+    let calls = 0;
+    registry.register({ name: "echo" }, () => {
+      calls += 1;
+      return "unexpected";
+    });
+
+    await new AgentLoop({
+      manifest: { provider: { kind: "openai", model: "gpt-test" } },
+      log,
+      provider,
+      tools: registry,
+    } as ConstructorParameters<typeof AgentLoop>[0]).runAfterInput();
+
+    expect(calls).toBe(0);
+    const result = log.events().find((event) => event.event_type === "tool_result");
+    expect(result?.payload).toMatchObject({
+      tool_use_id: "call_truncated",
+      error_class: "IncompleteToolResult",
+      reason: "incomplete_tool_result",
+      stop_reason: "max_tokens",
+    });
+  });
+
   it("refuses malformed network URLs instead of failing open", async () => {
     const log = new Log();
     appendUserMessage(log, "fetch");

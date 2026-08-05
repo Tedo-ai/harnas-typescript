@@ -13,6 +13,6 @@ describe("provider-wire conformance", () => {
       return;
     }
     const report = await runProviderStreamCorpus(spec);
-    expect(report).toEqual({ cases: 18, profiles: 39 });
+    expect(report).toEqual({ cases: 19, profiles: 41 });
   });
 });

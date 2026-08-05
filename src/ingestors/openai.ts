@@ -1,4 +1,4 @@
-import type { EventPayload } from "../core/events.js";
+import type { EventPayload, StopReason } from "../core/events.js";
 import { normalizeUsage } from "../core/usage.js";
 import { providerCarrier } from "../provider-carriers.js";
 
@@ -48,7 +48,7 @@ export function ingestOpenAIResponseEvents(
       payload: {
         content: [{ type: "text", text }],
         text,
-        stop_reason: choice?.finish_reason === "tool_calls" ? "tool_use" : "end_turn",
+        stop_reason: openAIStopReason(choice?.finish_reason),
         usage: normalizeUsage(response.usage),
         provider: "openai",
         ...(response.model !== undefined ? { model: response.model } : {}),
@@ -103,6 +103,13 @@ export function ingestOpenAIResponseEvents(
     });
   }
   return events;
+}
+
+function openAIStopReason(reason: string | null | undefined): StopReason {
+  if (reason === "tool_calls") return "tool_use";
+  if (reason === "length") return "max_tokens";
+  if (reason === "stop" || reason === undefined || reason === null) return "end_turn";
+  return "other";
 }
 
 function openAIReasoning(message: OpenAIMessage | undefined): readonly Record<string, unknown>[] {
