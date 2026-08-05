@@ -4,12 +4,12 @@
 
 - AgentLoop closes complete tool calls emitted under a non-tool stop reason
   with canonical failure results, invokes zero tools, and stops the current
-  run; 79/79 agent fixtures pass.
+  run; the proposed Integrity Core fixture passes.
 
 ### Added
 
-- Raw provider-wire conformance for Anthropic, OpenAI, and Gemini: 19 logical
-  cases and 41 deterministic byte-fragmented executions through production
+- Raw provider-wire conformance for Anthropic, OpenAI, and Gemini: 18 logical
+  cases and 39 deterministic byte-fragmented executions through production
   `fetch`/SSE parsers, with a standalone runner.
 - Production Anthropic and Gemini stream adapters alongside the hardened
   OpenAI stream adapter.
@@ -24,8 +24,8 @@
 - Built-in stream adapters now fail closed on provider error frames,
   malformed JSON or UTF-8, invalid tool lifecycles, duplicate or missing
   terminal evidence, and partial failures without producing durable results.
-- Updated the conformance target to fixtures v0.22.0: 79/79 agent fixtures
-  plus 41/41 raw provider-wire executions.
+- Updated the conformance target to fixtures v0.22.0: 78/78 agent fixtures
+  plus 39/39 raw provider-wire executions.
 - Updated the conformance target to fixtures v0.20.0: 75/75.
 - Reset the conformance runner to the strict runtime path: scripted provider
   turns now execute through `AgentLoop`, `ToolRegistry`, provider projections,

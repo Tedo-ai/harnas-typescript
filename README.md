@@ -8,7 +8,7 @@ strict TypeScript package scaffold, JSONL Session persistence,
 manifest-schema validation, observation bus, provider projections, ingestors,
 and a strict conformance runner for `@tedo-ai/harnas-typescript`.
 
-Raw provider-wire conformance: 19/19 cases and 41/41 deterministic
+Raw provider-wire conformance: 18/18 cases and 39/39 deterministic
 byte-fragmented executions through the production Anthropic, OpenAI, and
 Gemini parsers.
 
@@ -66,7 +66,7 @@ const newEvents = await session.eventsSince(0);
 
 ## Status
 
-- Current runtime conformance: 79/79 fixtures locally against the Integrity Core
+- Current runtime conformance: 78/78 fixtures locally against the current
   spec checkout. The runner is strict, MarkerTail compaction is
   tool-pair-safe, manifest hooks dispatch through registered handlers, and
   `Session.fork(at_seq)` rewinds the Log instead of passing vacuously.
